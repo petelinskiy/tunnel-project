@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tunnel Proxy - Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header { margin-bottom: 40px; }
+
+        h1 { font-size: 32px; font-weight: 700; color: #f1f5f9; margin-bottom: 10px; }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .status-active { background: #10b981; color: white; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: #1e293b;
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+        .stat-label { font-size: 14px; color: #94a3b8; margin-bottom: 8px; }
+        .stat-value { font-size: 28px; font-weight: 700; color: #f1f5f9; }
+
+        .servers-section {
+            background: #1e293b;
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            margin-bottom: 40px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        h2 { font-size: 24px; font-weight: 600; }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary { background: #475569; color: white; }
+        .btn-secondary:hover { background: #64748b; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        table { width: 100%; border-collapse: collapse; }
+        thead th {
+            text-align: left;
+            padding: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            border-bottom: 1px solid #334155;
+        }
+        tbody td { padding: 16px 12px; border-bottom: 1px solid #334155; }
+
+        .server-status { display: flex; align-items: center; gap: 8px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-dot.active { background: #10b981; }
+        .status-dot.inactive { background: #ef4444; }
+
+        .latency { color: #10b981; font-weight: 500; }
+        .latency.slow { color: #f59e0b; }
+        .latency.down { color: #ef4444; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active { display: flex; }
+
+        .modal-content {
+            background: #1e293b;
+            padding: 32px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        .form-group { margin-bottom: 20px; }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #cbd5e1;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 14px;
+        }
+        input:focus { outline: none; border-color: #3b82f6; }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 24px;
+        }
+
+        /* Deploy progress */
+        .deploy-progress { display: none; margin-top: 20px; }
+        .deploy-progress.visible { display: block; }
+
+        .progress-bar-wrap {
+            background: #0f172a;
+            border-radius: 6px;
+            height: 10px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 6px;
+            transition: width 0.4s ease;
+            width: 0%;
+        }
+        .progress-bar.done { background: #10b981; }
+        .progress-bar.error { background: #ef4444; }
+
+        .progress-msg {
+            font-size: 13px;
+            color: #94a3b8;
+            min-height: 18px;
+        }
+        .progress-msg.error { color: #f87171; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>Tunnel Proxy Dashboard</h1>
+        <span class="status-badge status-active">● System Active</span>
+    </header>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Active Servers</div>
+            <div class="stat-value" id="active-servers">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Traffic</div>
+            <div class="stat-value" id="total-traffic">0 MB</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Latency</div>
+            <div class="stat-value" id="avg-latency">-- ms</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Connections</div>
+            <div class="stat-value" id="active-conns">0</div>
+        </div>
+    </div>
+
+    <div class="servers-section">
+        <div class="section-header">
+            <h2>Servers</h2>
+            <button class="btn btn-primary" onclick="openAddServerModal()">+ Add Server</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Server</th>
+                    <th>Status</th>
+                    <th>Latency</th>
+                    <th>CPU</th>
+                    <th>Traffic</th>
+                </tr>
+            </thead>
+            <tbody id="servers-table">
+                <tr>
+                    <td colspan="5" style="text-align:center;color:#64748b;padding:40px;">
+                        No servers configured. Click "Add Server" to get started.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Server Modal -->
+<div class="modal" id="add-server-modal">
+    <div class="modal-content">
+        <h2 style="margin-bottom:24px;">Add / Deploy Server</h2>
+
+        <div class="form-group">
+            <label for="server-host">Server IP / Hostname</label>
+            <input type="text" id="server-host" placeholder="192.168.1.100 or example.com">
+        </div>
+
+        <div class="form-group">
+            <label for="server-port">Tunnel Port (default 443)</label>
+            <input type="number" id="server-port" value="443">
+        </div>
+
+        <div class="form-group">
+            <label for="ssh-user">SSH Username</label>
+            <input type="text" id="ssh-user" placeholder="root">
+        </div>
+
+        <div class="form-group">
+            <label for="ssh-pass">SSH Password</label>
+            <input type="password" id="ssh-pass" placeholder="••••••••">
+        </div>
+
+        <!-- Deploy progress -->
+        <div class="deploy-progress" id="deploy-progress">
+            <div class="progress-bar-wrap">
+                <div class="progress-bar" id="deploy-bar"></div>
+            </div>
+            <div class="progress-msg" id="deploy-msg">Starting...</div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="btn-cancel" onclick="closeAddServerModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-deploy" onclick="deployServer()">Deploy &amp; Connect</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let ws = null;
+
+    // ── WebSocket ──────────────────────────────────────────────────────────────
+    function connectWebSocket() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws/monitor`);
+
+        ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            switch (msg.type) {
+                case 'metrics':        handleMetrics(msg.metrics); break;
+                case 'deploy_progress': handleDeployProgress(msg.progress, msg.message); break;
+                case 'deploy_done':    handleDeployDone(); break;
+                case 'deploy_error':   handleDeployError(msg.message); break;
+            }
+        };
+
+        ws.onclose = () => setTimeout(connectWebSocket, 3000);
+    }
+
+    // ── Metrics ────────────────────────────────────────────────────────────────
+    function handleMetrics(metrics) {
+        if (!metrics || metrics.length === 0) return;
+
+        const active = metrics.filter(m => m.status === 'active').length;
+        document.getElementById('active-servers').textContent = active;
+
+        const avgLat = metrics.reduce((s, m) => s + (m.latency / 1e6), 0) / metrics.length;
+        document.getElementById('avg-latency').textContent = Math.round(avgLat) + ' ms';
+
+        const totalTraffic = metrics.reduce((s, m) => s + m.total_traffic, 0);
+        document.getElementById('total-traffic').textContent =
+            (totalTraffic / 1024 / 1024).toFixed(1) + ' MB';
+
+        const totalConns = metrics.reduce((s, m) => s + m.active_conns, 0);
+        document.getElementById('active-conns').textContent = totalConns;
+
+        updateServersTable(metrics);
+    }
+
+    function updateServersTable(metrics) {
+        const tbody = document.getElementById('servers-table');
+        if (!metrics.length) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:40px;">No servers configured.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = metrics.map(m => {
+            const lat = Math.round(m.latency / 1e6);
+            const latClass = lat > 150 ? 'slow' : lat === 0 ? 'down' : '';
+            const dot = m.status === 'active' ? 'active' : 'inactive';
+            return `<tr>
+                <td><div class="server-status"><div class="status-dot ${dot}"></div>${m.server_id}</div></td>
+                <td>${m.status}</td>
+                <td class="latency ${latClass}">${lat > 0 ? lat + ' ms' : '--'}</td>
+                <td>${(m.cpu_usage || 0).toFixed(1)}%</td>
+                <td>${((m.total_traffic || 0) / 1024 / 1024).toFixed(2)} MB</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ── Deploy progress ────────────────────────────────────────────────────────
+    function handleDeployProgress(pct, msg) {
+        document.getElementById('deploy-bar').style.width = pct + '%';
+        document.getElementById('deploy-msg').textContent = msg;
+    }
+
+    function handleDeployDone() {
+        const bar = document.getElementById('deploy-bar');
+        bar.style.width = '100%';
+        bar.classList.add('done');
+        document.getElementById('deploy-msg').textContent = 'Deployment complete!';
+        document.getElementById('btn-deploy').disabled = false;
+        document.getElementById('btn-cancel').textContent = 'Close';
+        setTimeout(closeAddServerModal, 2000);
+    }
+
+    function handleDeployError(msg) {
+        const bar = document.getElementById('deploy-bar');
+        bar.classList.add('error');
+        const msgEl = document.getElementById('deploy-msg');
+        msgEl.textContent = 'Error: ' + msg;
+        msgEl.classList.add('error');
+        document.getElementById('btn-deploy').disabled = false;
+        document.getElementById('btn-cancel').textContent = 'Close';
+    }
+
+    // ── Modal ──────────────────────────────────────────────────────────────────
+    function openAddServerModal() {
+        resetDeployUI();
+        document.getElementById('add-server-modal').classList.add('active');
+    }
+
+    function closeAddServerModal() {
+        document.getElementById('add-server-modal').classList.remove('active');
+        resetDeployUI();
+    }
+
+    function resetDeployUI() {
+        document.getElementById('deploy-progress').classList.remove('visible');
+        document.getElementById('deploy-bar').style.width = '0%';
+        document.getElementById('deploy-bar').className = 'progress-bar';
+        const msgEl = document.getElementById('deploy-msg');
+        msgEl.textContent = '';
+        msgEl.className = 'progress-msg';
+        document.getElementById('btn-deploy').disabled = false;
+        document.getElementById('btn-cancel').textContent = 'Cancel';
+    }
+
+    // ── Deploy ─────────────────────────────────────────────────────────────────
+    async function deployServer() {
+        const host = document.getElementById('server-host').value.trim();
+        const port = parseInt(document.getElementById('server-port').value) || 443;
+        const user = document.getElementById('ssh-user').value.trim();
+        const pass = document.getElementById('ssh-pass').value;
+
+        if (!host) { alert('Please enter server host'); return; }
+
+        // Show progress UI
+        document.getElementById('deploy-progress').classList.add('visible');
+        document.getElementById('btn-deploy').disabled = true;
+        document.getElementById('deploy-msg').textContent = 'Sending request...';
+
+        try {
+            const resp = await fetch('/api/deploy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, port, username: user, password: pass })
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: resp.statusText }));
+                handleDeployError(err.error || resp.statusText);
+            }
+            // Progress updates come via WebSocket
+        } catch (err) {
+            handleDeployError(err.message);
+        }
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    window.addEventListener('load', connectWebSocket);
+</script>
+</body>
+</html>

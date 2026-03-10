@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  tunnel-server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    container_name: tunnel-server
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs/server.yml:/app/configs/server.yml
+    environment:
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "443"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
