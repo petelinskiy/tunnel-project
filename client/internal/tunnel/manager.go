@@ -260,20 +260,19 @@ func (m *Manager) checkServersHealth() {
 	}
 	m.mu.Unlock()
 
-	// Замер RTT + сбор метрик с сервера
+	// Замер RTT (TCP dial к серверу) + сбор метрик с сервера
 	for _, server := range alive {
 		go func(s *ServerConnection) {
+			addr := fmt.Sprintf("%s:%d", s.Info.Host, s.Info.Port)
 			start := time.Now()
-			stream, err := s.Session.OpenStream()
-			if err != nil {
-				return
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			if err == nil {
+				conn.Close()
+				latency := time.Since(start)
+				s.mu.Lock()
+				s.Metrics.Latency = latency
+				s.mu.Unlock()
 			}
-			stream.Close()
-			latency := time.Since(start)
-
-			s.mu.Lock()
-			s.Metrics.Latency = latency
-			s.mu.Unlock()
 
 			fetchServerMetrics(s)
 		}(server)

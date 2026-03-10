@@ -114,6 +114,17 @@ fi
 
 log "Compose: $($COMPOSE version --short 2>/dev/null || $COMPOSE version | head -1)"
 
+# Прописываем IPv4-only DNS для Docker daemon.
+# По умолчанию BuildKit использует IPv6 DNS (2001:4860:4860::8888), который
+# может быть недоступен — тогда go mod tidy внутри build зависает/падает.
+if [[ ! -f /etc/docker/daemon.json ]] || ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
+    info "Настраиваем Docker daemon: IPv4-only DNS..."
+    echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' > /etc/docker/daemon.json
+    systemctl restart docker >/dev/null 2>&1 || true
+    sleep 2
+    log "Docker daemon перезапущен с IPv4 DNS"
+fi
+
 # Чтобы sudo не ругался на hostname — добавляем в /etc/hosts если нет
 HOSTNAME_VAL=$(hostname 2>/dev/null || true)
 if [[ -n "$HOSTNAME_VAL" ]] && ! grep -q "$HOSTNAME_VAL" /etc/hosts 2>/dev/null; then
@@ -304,10 +315,14 @@ EOF
     iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports "$REDSOCKS_PORT"
 
     # DNS клиентов → dnsmasq
+    # Docker-контейнеры исключаем: dnsmasq не слушает на docker0,
+    # поэтому BuildKit не может резолвить имена при сборке образов
     if [[ "$DNS_READY" == true ]]; then
+        iptables -t nat -A PREROUTING -s 172.16.0.0/12 -p udp --dport 53 -j RETURN
+        iptables -t nat -A PREROUTING -s 172.16.0.0/12 -p tcp --dport 53 -j RETURN
         iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53
         iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-ports 53
-        log "DNS клиентов перехвачен → dnsmasq"
+        log "DNS клиентов перехвачен → dnsmasq (Docker-сети исключены)"
     fi
 
     # Применяем к входящему трафику
