@@ -4,7 +4,7 @@ FROM golang:1.21-alpine AS builder
 
 RUN apk add --no-cache git gcc musl-dev
 
-ENV GOPROXY=https://goproxy.io,https://goproxy.cn,direct
+ENV GOPROXY=https://proxy.golang.org,direct
 ENV GONOSUMDB=*
 
 WORKDIR /build
