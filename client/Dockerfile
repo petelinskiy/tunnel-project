@@ -1,22 +1,20 @@
+# syntax=docker/dockerfile:1
 # ─── Stage 1: Build server binary (for SSH deploy) ───────────────────────────
 FROM golang:1.21-alpine AS server-builder
 
 RUN apk add --no-cache git gcc musl-dev
 
-# Use alternative proxies — proxy.golang.org is blocked in some regions
 ENV GOPROXY=https://goproxy.io,https://goproxy.cn,direct
 ENV GONOSUMDB=*
 
 WORKDIR /build
-
 COPY shared/ ./shared/
-COPY server/go.mod ./server/go.mod
+COPY server/ ./server/
 WORKDIR /build/server
-RUN go mod download all
 
-COPY server/ .
-
-RUN rm -f go.sum && GONOSUMDB=* go mod tidy && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    rm -f go.sum && GONOSUMDB=* go mod tidy && \
     CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-w -s" \
       -o tunnel-server \
@@ -27,20 +25,17 @@ FROM golang:1.21-alpine AS client-builder
 
 RUN apk add --no-cache git gcc musl-dev
 
-# Use alternative proxies — proxy.golang.org is blocked in some regions
 ENV GOPROXY=https://goproxy.io,https://goproxy.cn,direct
 ENV GONOSUMDB=*
 
 WORKDIR /build
-
 COPY shared/ ./shared/
-COPY client/go.mod ./client/go.mod
+COPY client/ ./client/
 WORKDIR /build/client
-RUN go mod download all
 
-COPY client/ .
-
-RUN GONOSUMDB=* go mod tidy && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GONOSUMDB=* go mod tidy && \
     CGO_ENABLED=1 GOOS=linux go build \
       -ldflags="-w -s" \
       -o tunnel-client \

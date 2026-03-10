@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Build stage
 FROM golang:1.21-alpine AS builder
 
@@ -8,19 +9,13 @@ ENV GONOSUMDB=*
 
 WORKDIR /build
 
-# Copy shared module
 COPY shared/ ./shared/
-
-# Copy server go.mod (без go.sum — пересоздадим через tidy)
-COPY server/go.mod ./server/go.mod
+COPY server/ ./server/
 WORKDIR /build/server
-RUN go mod download all
 
-# Copy server source
-COPY server/ .
-
-# Tidy + build (tidy обновит go.sum под актуальные зависимости)
-RUN rm -f go.sum && GONOSUMDB=* go mod tidy && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    rm -f go.sum && GONOSUMDB=* go mod tidy && \
     CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o tunnel-server \
