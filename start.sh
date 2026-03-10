@@ -290,11 +290,15 @@ EOF
     info "Создаём цепочку REDSOCKS..."
     iptables -t nat -N REDSOCKS
 
-    # Локальный трафик — пропускаем
+    # Docker-контейнеры исключаем по источнику — иначе деплой через SSH
+    # из tunnel-client уходит в redsocks (нет серверов) и падает с "connection refused"
+    iptables -t nat -A REDSOCKS -s 172.16.0.0/12 -j RETURN
+
+    # Локальный трафик по назначению — пропускаем
     for NET in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do
         iptables -t nat -A REDSOCKS -d "$NET" -j RETURN
     done
-    log "Локальные сети исключены из туннеля"
+    log "Локальные и Docker-сети исключены из туннеля"
 
     # Весь остальной TCP → redsocks
     iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports "$REDSOCKS_PORT"
