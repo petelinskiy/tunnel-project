@@ -16,7 +16,7 @@ tunnel:
     - "storage.googleapis.com"
 
 balancing:
-  strategy: latency  # round-robin, latency, least-loaded
+  strategy: round-robin  # round-robin, latency, least-loaded
   health_check_interval: 30s
   failover_enabled: true
 
