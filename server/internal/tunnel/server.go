@@ -69,11 +69,12 @@ func (s *Server) Start() error {
 		}
 	}
 
-	// NextProtos включает h2 — клиент (Chrome fingerprint) его видит в ServerHello
+	// Только http/1.1 — наш сервер говорит HTTP/1.1 WebSocket, не HTTP/2.
+	// Chrome fingerprint отправляет h2 в ClientHello, но сервер отвечает http/1.1 — это нормально.
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"h2", "http/1.1"},
+		NextProtos:   []string{"http/1.1"},
 	}
 
 	addr := fmt.Sprintf(":%d", s.config.Server.ListenPort)
