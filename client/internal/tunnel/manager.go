@@ -342,10 +342,6 @@ func (m *Manager) saveConfig() error {
 	return os.WriteFile(m.configPath, data, 0644)
 }
 
-func (m *Manager) GetObfuscationKey() string {
-	return m.config.Tunnel.ObfuscationKey
-}
-
 func (m *Manager) GetMetrics() []*models.ServerMetrics {
 	servers := m.GetServers()
 	metrics := make([]*models.ServerMetrics, len(servers))

@@ -16,12 +16,10 @@ const serverBinaryPath = "/app/tunnel-server"
 type ProgressFunc func(progress int, message string)
 
 // Deployer handles SSH-based server deployment.
-type Deployer struct {
-	obfuscationKey string
-}
+type Deployer struct{}
 
-func NewDeployer(obfuscationKey string) *Deployer {
-	return &Deployer{obfuscationKey: obfuscationKey}
+func NewDeployer() *Deployer {
+	return &Deployer{}
 }
 
 // Deploy installs and starts the tunnel server on a remote host via SSH.
@@ -112,13 +110,9 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword string, onProgress Progress
 	}
 
 	onProgress(60, "Writing server configuration...")
-	serverConfig := fmt.Sprintf(`server:
+	serverConfig := `server:
   listen_port: 443
   metrics_port: 8443
-
-tunnel:
-  obfuscation_enabled: true
-  obfuscation_key: "%s"
 
 tls:
   cert_path: /opt/tunnel/data/cert.pem
@@ -128,7 +122,7 @@ tls:
 monitoring:
   enabled: true
   metrics_endpoint: /metrics
-`, d.obfuscationKey)
+`
 
 	if err := uploadText("/opt/tunnel/server.yml", serverConfig); err != nil {
 		return fmt.Errorf("config upload failed: %w", err)

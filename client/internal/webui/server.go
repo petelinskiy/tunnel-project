@@ -171,7 +171,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 			s.wsHub.broadcast <- data
 		}
 
-		d := deploy.NewDeployer(s.tunnelManager.GetObfuscationKey())
+		d := deploy.NewDeployer()
 		err := d.Deploy(req.Host, req.SSHUser, req.SSHPass, func(progress int, msg string) {
 			log.Printf("[deploy %s] %d%% %s", serverID, progress, msg)
 			broadcast(map[string]interface{}{

@@ -2,10 +2,6 @@ server:
   listen_port: 443
   metrics_port: 8443
 
-tunnel:
-  obfuscation_enabled: true
-  obfuscation_key: "b29406e1cf214e2ebdb8ac0e6a54b11a"
-
 tls:
   cert_path: /app/data/cert.pem
   key_path: /app/data/key.pem

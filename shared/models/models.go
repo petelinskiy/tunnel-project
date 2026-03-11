@@ -11,9 +11,8 @@ type ClientConfig struct {
 	} `yaml:"client"`
 
 	Tunnel struct {
-		ObfuscationKey string   `yaml:"obfuscation_key"`
-		SNIList        []string `yaml:"sni_list"`         // домены для маскировки SNI
-		JitterMaxMs    int      `yaml:"jitter_max_ms"`    // макс. задержка перед подключением (мс)
+		SNIList     []string `yaml:"sni_list"`      // домены для маскировки SNI
+		JitterMaxMs int      `yaml:"jitter_max_ms"` // макс. задержка перед подключением (мс)
 	} `yaml:"tunnel"`
 
 	Balancing struct {
@@ -33,8 +32,6 @@ type ServerConfig struct {
 	} `yaml:"server"`
 
 	Tunnel struct {
-		ObfuscationEnabled bool   `yaml:"obfuscation_enabled"`
-		ObfuscationKey     string `yaml:"obfuscation_key"`
 	} `yaml:"tunnel"`
 
 	TLS struct {

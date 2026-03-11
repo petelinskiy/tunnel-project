@@ -4,7 +4,6 @@ client:
   data_dir: /app/data
 
 tunnel:
-  obfuscation_key: "b29406e1cf214e2ebdb8ac0e6a54b11a"
   jitter_max_ms: 500   # случайная задержка 0–500ms перед каждым подключением
   sni_list:            # SNI подставляется случайно из списка (маскировка под реальные домены)
     - "www.google.com"
