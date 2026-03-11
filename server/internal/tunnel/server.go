@@ -120,7 +120,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	smuxCfg := smux.DefaultConfig()
 	smuxCfg.KeepAliveInterval  = 10 * time.Second
 	smuxCfg.KeepAliveTimeout   = 30 * time.Second
-	smuxCfg.MaxFrameSize       = 65536
+	smuxCfg.MaxFrameSize       = 65535
 	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
 	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
 
