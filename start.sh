@@ -253,7 +253,7 @@ base {
 }
 
 redsocks {
-    local_ip   = 127.0.0.1;
+    local_ip   = 0.0.0.0;
     local_port = $REDSOCKS_PORT;
     ip         = 127.0.0.1;
     port       = $SOCKS_PORT;
