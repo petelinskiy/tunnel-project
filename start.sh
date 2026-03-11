@@ -181,9 +181,17 @@ step_done
 
 if [[ "$GATEWAY_MODE" == true ]]; then
 
-    # Определяем LAN-интерфейс и IP машины
+    # Определяем основной LAN-интерфейс и IP машины
     LAN_IFACE=$(ip route | awk '/^default/{print $5; exit}')
     LAN_IP=$(ip -4 addr show "$LAN_IFACE" | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+
+    # Собираем IP всех физических интерфейсов (исключаем lo, docker, br-)
+    ALL_LAN_IPS=$(ip -4 addr show | awk '/inet / && !/127\.0\.0\.1/{print $2}' | cut -d/ -f1 \
+        | while read ip; do
+            iface=$(ip -4 addr | grep -B2 "inet $ip" | awk '/^[0-9]+:/{gsub(":",""); print $2}' | head -1)
+            [[ "$iface" =~ ^(lo|docker|br-|veth) ]] || echo "$ip"
+          done | tr '\n' ',')
+    ALL_LAN_IPS="${ALL_LAN_IPS%,}"  # убираем trailing запятую
 
     if [[ -z "$LAN_IFACE" ]]; then
         err "Не удалось определить сетевой интерфейс. Gateway не настроен."
@@ -264,7 +272,7 @@ EOF
 
         if command -v dnsmasq &>/dev/null; then
             cat > /etc/dnsmasq.d/tunnel-gateway.conf << EOF
-listen-address=127.0.0.1,$LAN_IP
+listen-address=127.0.0.1,${ALL_LAN_IPS}
 bind-interfaces
 no-resolv
 server=8.8.8.8
@@ -278,7 +286,7 @@ EOF
             systemctl restart dnsmasq
             # Переключаем resolv.conf на локальный dnsmasq
             echo "nameserver 127.0.0.1" > /etc/resolv.conf
-            log "dnsmasq запущен → DNS клиентов → 8.8.8.8 / 1.1.1.1 (минуя ISP)"
+            log "dnsmasq запущен → DNS клиентов → 8.8.8.8 / 1.1.1.1 (минуя ISP) [слушает: 127.0.0.1,${ALL_LAN_IPS}]"
             DNS_READY=true
         else
             DNS_READY=false
