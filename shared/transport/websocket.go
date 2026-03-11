@@ -78,16 +78,31 @@ func ClientUpgrade(conn net.Conn, host string) (*WSConn, error) {
 	return &WSConn{conn: conn, reader: br, isClient: true}, nil
 }
 
+// FallbackHandler is called for non-WebSocket HTTP requests.
+// Receives the raw conn (not yet closed), HTTP method, and URL path.
+// If nil, a default "It works!" page is served.
+var FallbackHandler func(conn net.Conn, method, path string)
+
 // ServerUpgrade reads the HTTP request and performs the WebSocket handshake.
 // Returns (wsConn, nil) on a valid WebSocket upgrade.
-// Returns (nil, nil) if not a WebSocket request — a fake HTML page is served and conn is closed.
+// Returns (nil, nil) if not a WebSocket request — FallbackHandler (or a default page) is served.
 // Returns (nil, err) on I/O errors.
 func ServerUpgrade(conn net.Conn) (*WSConn, error) {
 	br := bufio.NewReader(conn)
 
-	// Read request line
-	if _, err := br.ReadString('\n'); err != nil {
+	// Read and parse request line (e.g. "GET /about HTTP/1.1\r\n")
+	requestLine, err := br.ReadString('\n')
+	if err != nil {
 		return nil, fmt.Errorf("ws server read: %w", err)
+	}
+	method, urlPath := "GET", "/"
+	if parts := strings.Fields(requestLine); len(parts) >= 2 {
+		method = parts[0]
+		urlPath = parts[1]
+		// Strip query string
+		if i := strings.IndexByte(urlPath, '?'); i >= 0 {
+			urlPath = urlPath[:i]
+		}
 	}
 
 	isUpgrade := false
@@ -112,7 +127,11 @@ func ServerUpgrade(conn net.Conn) (*WSConn, error) {
 	}
 
 	if !isUpgrade {
-		serveFakePage(conn)
+		if FallbackHandler != nil {
+			FallbackHandler(conn, method, urlPath)
+		} else {
+			serveFakePage(conn)
+		}
 		return nil, nil
 	}
 

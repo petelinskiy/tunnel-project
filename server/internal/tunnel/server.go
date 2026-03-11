@@ -60,6 +60,8 @@ func NewServer(config *models.ServerConfig) *Server {
 
 // Start запускает TLS сервер с smux
 func (s *Server) Start() error {
+	transport.FallbackHandler = serveStaticFile
+
 	cert, err := tls.LoadX509KeyPair(s.config.TLS.CertPath, s.config.TLS.KeyPath)
 	if err != nil {
 		log.Println("Generating self-signed certificate...")
