@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,16 +17,18 @@ import (
 	smux "github.com/xtaci/smux"
 	utls "github.com/refraction-networking/utls"
 	"github.com/yourusername/tunnel-project/shared/models"
+	"gopkg.in/yaml.v3"
 )
 
 // Manager управляет туннельными соединениями
 type Manager struct {
-	config   *models.ClientConfig
-	servers  map[string]*ServerConnection
-	balancer *LoadBalancer
-	mu       sync.RWMutex
-	ctx      context.Context
-	cancel   context.CancelFunc
+	config     *models.ClientConfig
+	configPath string
+	servers    map[string]*ServerConnection
+	balancer   *LoadBalancer
+	mu         sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // ServerConnection представляет соединение с сервером
@@ -38,14 +41,15 @@ type ServerConnection struct {
 }
 
 // NewManager создает новый менеджер туннелей
-func NewManager(config *models.ClientConfig) *Manager {
+func NewManager(config *models.ClientConfig, configPath string) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
-		config:  config,
-		servers: make(map[string]*ServerConnection),
-		ctx:     ctx,
-		cancel:  cancel,
+		config:     config,
+		configPath: configPath,
+		servers:    make(map[string]*ServerConnection),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 
 	m.balancer = NewLoadBalancer(m, config.Balancing.Strategy)
@@ -302,11 +306,40 @@ func (m *Manager) GetServers() []*ServerConnection {
 }
 
 func (m *Manager) AddServer(server models.ServerInfo) {
+	// Сохраняем сервер в конфиг-файл если его там ещё нет
+	m.mu.Lock()
+	found := false
+	for _, s := range m.config.Servers {
+		if s.ID == server.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.config.Servers = append(m.config.Servers, server)
+		if err := m.saveConfig(); err != nil {
+			log.Printf("Warning: failed to persist server %s to config: %v", server.ID, err)
+		}
+	}
+	m.mu.Unlock()
+
 	go func() {
 		if err := m.connectToServer(server); err != nil {
 			log.Printf("connectToServer %s failed: %v", server.ID, err)
 		}
 	}()
+}
+
+// saveConfig записывает текущий конфиг обратно в YAML-файл
+func (m *Manager) saveConfig() error {
+	if m.configPath == "" {
+		return nil
+	}
+	data, err := yaml.Marshal(m.config)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.configPath, data, 0644)
 }
 
 func (m *Manager) GetObfuscationKey() string {

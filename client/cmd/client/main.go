@@ -27,7 +27,7 @@ func main() {
 	log.Println("🚀 Starting Tunnel Client...")
 
 	// Инициализация туннельного менеджера
-	tunnelManager := tunnel.NewManager(config)
+	tunnelManager := tunnel.NewManager(config, *configPath)
 	if err := tunnelManager.Start(); err != nil {
 		log.Fatalf("Failed to start tunnel manager: %v", err)
 	}
