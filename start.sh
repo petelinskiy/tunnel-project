@@ -264,6 +264,40 @@ EOF
         systemctl restart redsocks
         log "redsocks запущен → перехват TCP на :$REDSOCKS_PORT → SOCKS5 :$SOCKS_PORT"
 
+        # Watcher: перезапускает redsocks когда Docker-контейнер стартует.
+        # Без этого при перезапуске контейнера очередь redsocks переполняется
+        # зависшими соединениями → port 12345 начинает отклонять новые → нет инета.
+        cat > /usr/local/bin/redsocks-docker-watch.sh << 'WATCH_SCRIPT'
+#!/bin/bash
+docker events \
+    --filter "container=tunnel-client" \
+    --filter "event=start" \
+    --format "{{.Status}}" | while read event; do
+        sleep 4
+        systemctl restart redsocks
+        logger "redsocks restarted after tunnel-client start"
+done
+WATCH_SCRIPT
+        chmod +x /usr/local/bin/redsocks-docker-watch.sh
+
+        cat > /etc/systemd/system/redsocks-docker-watch.service << UNIT
+[Unit]
+Description=Restart redsocks when tunnel-client container starts
+After=docker.service
+Requires=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/redsocks-docker-watch.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+        systemctl daemon-reload
+        systemctl enable --now redsocks-docker-watch >/dev/null 2>&1
+        log "redsocks-docker-watch установлен → авто-перезапуск redsocks при рестарте контейнера"
+
         if ! command -v dnsmasq &>/dev/null; then
             info "Устанавливаем dnsmasq..."
             $PKG_UPDATE >/dev/null 2>&1
