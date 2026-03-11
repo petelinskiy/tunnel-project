@@ -133,8 +133,11 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 
 	// smux поверх TLS — один коннект, много независимых потоков
 	smuxCfg := smux.DefaultConfig()
-	smuxCfg.KeepAliveInterval = 10 * time.Second
-	smuxCfg.KeepAliveTimeout  = 30 * time.Second
+	smuxCfg.KeepAliveInterval  = 10 * time.Second
+	smuxCfg.KeepAliveTimeout   = 30 * time.Second
+	smuxCfg.MaxFrameSize       = 65536
+	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
+	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
 
 	session, err := smux.Client(uconn, smuxCfg)
 	if err != nil {
