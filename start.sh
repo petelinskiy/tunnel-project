@@ -229,74 +229,49 @@ if [[ "$GATEWAY_MODE" == true ]]; then
 
     step_done
 
-    # ─── Шаг 5: redsocks + dnsmasq ────────────────────────────────────────────
+    # ─── Шаг 5: gost (transparent proxy) + dnsmasq ───────────────────────────
 
-    step "Установка и настройка redsocks + dnsmasq"
+    step "Установка и настройка gost + dnsmasq"
 
-    if ! command -v redsocks &>/dev/null; then
-        info "Устанавливаем redsocks..."
-        $PKG_UPDATE >/dev/null 2>&1
-        if ! $PKG_INSTALL redsocks >/dev/null 2>&1; then
-            err "redsocks не удалось установить. Gateway-режим недоступен."
+    # gost — transparent TCP proxy без ограничения в 128 соединений (в отличие от redsocks 0.5)
+    if ! command -v gost &>/dev/null; then
+        info "Скачиваем gost..."
+        GOST_VER="3.0.0-rc10"
+        GOST_URL="https://github.com/go-gost/gost/releases/download/v${GOST_VER}/gost_${GOST_VER}_linux_amd64.tar.gz"
+        if curl -fsSL --max-time 30 -o /tmp/gost.tar.gz "$GOST_URL" 2>/dev/null; then
+            tar -xzf /tmp/gost.tar.gz -C /tmp/
+            mv /tmp/gost /usr/local/bin/gost
+            chmod +x /usr/local/bin/gost
+            rm -f /tmp/gost.tar.gz
+            log "gost установлен: $(/usr/local/bin/gost -V 2>&1 | head -1)"
+        else
+            err "gost не удалось скачать. Gateway-режим недоступен."
             GATEWAY_MODE=false
         fi
     fi
 
     if [[ "$GATEWAY_MODE" == true ]]; then
-        cat > /etc/redsocks.conf << EOF
-base {
-    log_debug = off;
-    log_info = on;
-    log = "file:/var/log/redsocks.log";
-    daemon = on;
-    redirector = iptables;
-}
+        # Останавливаем redsocks если он был установлен ранее
+        systemctl stop redsocks 2>/dev/null || true
+        systemctl disable redsocks 2>/dev/null || true
 
-redsocks {
-    local_ip   = 0.0.0.0;
-    local_port = $REDSOCKS_PORT;
-    ip         = 127.0.0.1;
-    port       = $SOCKS_PORT;
-    type       = socks5;
-}
-EOF
-        systemctl enable redsocks >/dev/null 2>&1
-        systemctl restart redsocks
-        log "redsocks запущен → перехват TCP на :$REDSOCKS_PORT → SOCKS5 :$SOCKS_PORT"
-
-        # Watcher: перезапускает redsocks когда Docker-контейнер стартует.
-        # Без этого при перезапуске контейнера очередь redsocks переполняется
-        # зависшими соединениями → port 12345 начинает отклонять новые → нет инета.
-        cat > /usr/local/bin/redsocks-docker-watch.sh << 'WATCH_SCRIPT'
-#!/bin/bash
-docker events \
-    --filter "container=tunnel-client" \
-    --filter "event=start" \
-    --format "{{.Status}}" | while read event; do
-        sleep 4
-        systemctl restart redsocks
-        logger "redsocks restarted after tunnel-client start"
-done
-WATCH_SCRIPT
-        chmod +x /usr/local/bin/redsocks-docker-watch.sh
-
-        cat > /etc/systemd/system/redsocks-docker-watch.service << UNIT
+        cat > /etc/systemd/system/gost-redirect.service << EOF
 [Unit]
-Description=Restart redsocks when tunnel-client container starts
-After=docker.service
-Requires=docker.service
+Description=GOST transparent TCP redirector to SOCKS5
+After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/redsocks-docker-watch.sh
+ExecStart=/usr/local/bin/gost -L "red://:${REDSOCKS_PORT}" -F "socks5://127.0.0.1:${SOCKS_PORT}"
 Restart=always
-RestartSec=5
+RestartSec=2
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-UNIT
+EOF
         systemctl daemon-reload
-        systemctl enable --now redsocks-docker-watch >/dev/null 2>&1
-        log "redsocks-docker-watch установлен → авто-перезапуск redsocks при рестарте контейнера"
+        systemctl enable --now gost-redirect >/dev/null 2>&1
+        log "gost запущен → перехват TCP на :$REDSOCKS_PORT → SOCKS5 :$SOCKS_PORT (лимит: 65536 соед.)"
 
         if ! command -v dnsmasq &>/dev/null; then
             info "Устанавливаем dnsmasq..."
