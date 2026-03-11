@@ -26,6 +26,7 @@ import (
 
 	smux "github.com/xtaci/smux"
 	"github.com/yourusername/tunnel-project/shared/models"
+	"github.com/yourusername/tunnel-project/shared/transport"
 )
 
 // cpuSnapshot — снимок /proc/stat для расчёта дельты CPU
@@ -113,9 +114,19 @@ func (s *Server) acceptLoop() {
 	}
 }
 
-// handleConn запускает smux-сессию поверх TLS соединения
+// handleConn выполняет WebSocket upgrade, затем запускает smux-сессию
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+
+	wsConn, err := transport.ServerUpgrade(conn)
+	if err != nil {
+		log.Printf("WebSocket upgrade error: %v", err)
+		return
+	}
+	if wsConn == nil {
+		// не WebSocket-запрос — фейковая страница уже отдана
+		return
+	}
 
 	smuxCfg := smux.DefaultConfig()
 	smuxCfg.KeepAliveInterval  = 10 * time.Second
@@ -124,7 +135,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
 	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
 
-	session, err := smux.Server(conn, smuxCfg)
+	session, err := smux.Server(wsConn, smuxCfg)
 	if err != nil {
 		log.Printf("smux server error: %v", err)
 		return

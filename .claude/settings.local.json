@@ -5,7 +5,8 @@
       "Bash(docker-compose -f server/docker-compose.yml build)",
       "Bash(docker compose -f client/docker-compose.yml down)",
       "Bash(docker compose -f server/docker-compose.yml down)",
-      "Bash(docker build -f client/Dockerfile -t tunnel-client:latest .)"
+      "Bash(docker build -f client/Dockerfile -t tunnel-client:latest .)",
+      "Bash(go build:*)"
     ]
   }
 }

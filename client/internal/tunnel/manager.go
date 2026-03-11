@@ -17,6 +17,7 @@ import (
 	smux "github.com/xtaci/smux"
 	utls "github.com/refraction-networking/utls"
 	"github.com/yourusername/tunnel-project/shared/models"
+	"github.com/yourusername/tunnel-project/shared/transport"
 	"gopkg.in/yaml.v3"
 )
 
@@ -131,7 +132,14 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 		return fmt.Errorf("uTLS handshake: %w", err)
 	}
 
-	// smux поверх TLS — один коннект, много независимых потоков
+	// WebSocket upgrade поверх TLS — трафик выглядит как браузерный WebSocket
+	wsConn, err := transport.ClientUpgrade(uconn, sni)
+	if err != nil {
+		uconn.Close()
+		return fmt.Errorf("WebSocket upgrade: %w", err)
+	}
+
+	// smux поверх WebSocket — один коннект, много независимых потоков
 	smuxCfg := smux.DefaultConfig()
 	smuxCfg.KeepAliveInterval  = 10 * time.Second
 	smuxCfg.KeepAliveTimeout   = 30 * time.Second
@@ -139,9 +147,9 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
 	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
 
-	session, err := smux.Client(uconn, smuxCfg)
+	session, err := smux.Client(wsConn, smuxCfg)
 	if err != nil {
-		uconn.Close()
+		wsConn.Close()
 		return fmt.Errorf("smux client: %w", err)
 	}
 
