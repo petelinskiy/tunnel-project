@@ -18,7 +18,7 @@ REDSOCKS_PORT=12345
 WEBUI_PORT=8080
 
 STEP=0
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 STEP_START=0
 SCRIPT_START=$(date +%s)
 
@@ -304,7 +304,111 @@ EOF
 
     step_done
 
-    # ─── Шаг 6: iptables ──────────────────────────────────────────────────────
+    # ─── Шаг 6: GeoIP (Россия напрямую) ──────────────────────────────────────
+
+    step "GeoIP: IP-адреса России напрямую, остальное — в туннель"
+
+    GEOIP_READY=false
+    GEOIP_COUNT=0
+
+    if [[ -n "$PKG_INSTALL" ]] && $PKG_INSTALL ipset >/dev/null 2>&1; then
+        log "ipset установлен"
+
+        # Скрипт обновления — скачивает список и атомарно обновляет ipset
+        cat > /usr/local/bin/update-geoip-ru.sh << 'UPDATEEOF'
+#!/bin/bash
+IPSET_NAME="russia"
+URL="https://www.ipdeny.com/ipblocks/data/countries/ru.zone"
+
+ipset list "$IPSET_NAME" &>/dev/null || ipset create "$IPSET_NAME" hash:net maxelem 131072
+
+TMPFILE=$(mktemp)
+if ! curl -fsSL --max-time 60 -o "$TMPFILE" "$URL"; then
+    rm -f "$TMPFILE"
+    echo "GeoIP: не удалось скачать список RU" >&2
+    exit 1
+fi
+
+TMP_SET="${IPSET_NAME}_tmp"
+ipset destroy "$TMP_SET" 2>/dev/null || true
+ipset create "$TMP_SET" hash:net maxelem 131072
+
+count=0
+while IFS= read -r prefix; do
+    [[ -z "$prefix" || "$prefix" == \#* ]] && continue
+    ipset add "$TMP_SET" "$prefix" 2>/dev/null && count=$((count+1))
+done < "$TMPFILE"
+rm -f "$TMPFILE"
+
+ipset swap "$TMP_SET" "$IPSET_NAME"
+ipset destroy "$TMP_SET" 2>/dev/null || true
+
+mkdir -p /etc/iptables
+ipset save "$IPSET_NAME" > /etc/iptables/ipset-russia.save
+echo "GeoIP RU: обновлено $count префиксов"
+UPDATEEOF
+        chmod +x /usr/local/bin/update-geoip-ru.sh
+
+        # Сервис восстановления ipset после перезагрузки (должен запуститься ДО iptables)
+        cat > /etc/systemd/system/ipset-russia.service << 'EOF'
+[Unit]
+Description=Restore Russia GeoIP ipset
+Before=netfilter-persistent.service iptables.service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'if [ -f /etc/iptables/ipset-russia.save ]; then ipset restore -! < /etc/iptables/ipset-russia.save; else /usr/local/bin/update-geoip-ru.sh; fi'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # Сервис + таймер ежедневного обновления
+        cat > /etc/systemd/system/update-geoip-ru.service << 'EOF'
+[Unit]
+Description=Update Russia GeoIP ipset
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-geoip-ru.sh
+EOF
+
+        cat > /etc/systemd/system/update-geoip-ru.timer << 'EOF'
+[Unit]
+Description=Daily Russia GeoIP update
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
+EOF
+
+        systemctl daemon-reload
+        systemctl enable ipset-russia >/dev/null 2>&1
+        systemctl enable update-geoip-ru.timer >/dev/null 2>&1
+
+        info "Загружаем список IP-диапазонов России (~6000 префиксов)..."
+        if /usr/local/bin/update-geoip-ru.sh; then
+            GEOIP_COUNT=$(ipset list russia 2>/dev/null | grep -c '^[0-9]' || echo 0)
+            log "GeoIP: загружено $GEOIP_COUNT IP-диапазонов России"
+            GEOIP_READY=true
+        else
+            warn "Не удалось загрузить GeoIP — весь трафик пойдёт через туннель"
+        fi
+    else
+        warn "ipset не удалось установить — GeoIP недоступен"
+    fi
+
+    step_done
+
+    # ─── Шаг 7: iptables ──────────────────────────────────────────────────────
 
     step "Настройка iptables и сохранение правил"
 
@@ -327,6 +431,12 @@ EOF
         iptables -t nat -A REDSOCKS -d "$NET" -j RETURN
     done
     log "Локальные и Docker-сети исключены из туннеля"
+
+    # Российские IP → напрямую (обход туннеля)
+    if [[ "$GEOIP_READY" == true ]]; then
+        iptables -t nat -A REDSOCKS -m set --match-set russia dst -j RETURN
+        log "GeoIP: $GEOIP_COUNT российских IP-диапазонов идут напрямую"
+    fi
 
     # Весь остальной TCP → redsocks
     iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports "$REDSOCKS_PORT"
@@ -392,7 +502,12 @@ if [[ "$GATEWAY_MODE" == true ]]; then
         echo -e "  DNS             → ${GREEN}8.8.8.8${NC}  (вручную, dnsmasq не установлен)"
     fi
     echo ""
-    echo -e "  Весь TCP-трафик устройств пойдёт через туннель."
+    if [[ "$GEOIP_READY" == true ]]; then
+        echo -e "  Российские IP ($GEOIP_COUNT диапазонов) → ${GREEN}напрямую${NC}"
+        echo -e "  Зарубежный трафик → ${GREEN}туннель${NC}"
+    else
+        echo -e "  Весь TCP-трафик устройств пойдёт через туннель."
+    fi
     echo -e "  Локальный LAN-трафик (10.x / 192.168.x / 172.16.x) идёт напрямую."
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
