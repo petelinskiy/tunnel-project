@@ -97,7 +97,11 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword string, onProgress Progress
 	// Если нет iptables-persistent — добавляем восстановление через rc.local
 	run(`bash -c 'if ! command -v iptables-save &>/dev/null; then true; elif [ ! -f /etc/network/if-pre-up.d/iptables ]; then printf "#!/bin/sh\niptables-restore < /etc/iptables/rules.v4\n" > /etc/network/if-pre-up.d/iptables && chmod +x /etc/network/if-pre-up.d/iptables; fi || true'`)
 
-	onProgress(42, "Uploading server binary...")
+	onProgress(42, "Stopping existing server...")
+	run("systemctl stop tunnel-server 2>/dev/null || true")
+	run("pkill -f 'tunnel-server --config' 2>/dev/null || true")
+
+	onProgress(50, "Uploading server binary...")
 	serverBin, err := os.ReadFile(serverBinaryPath)
 	if err != nil {
 		return fmt.Errorf("server binary not found at %s — must run inside Docker container: %w", serverBinaryPath, err)
@@ -151,7 +155,6 @@ WantedBy=multi-user.target
 `
 	if err := uploadText("/etc/systemd/system/tunnel-server.service", serviceUnit); err == nil {
 		run("systemctl daemon-reload")
-		run("systemctl stop tunnel-server 2>/dev/null || true")
 		if err := run("systemctl enable --now tunnel-server"); err != nil {
 			return fmt.Errorf("systemctl enable failed: %w", err)
 		}
