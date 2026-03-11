@@ -290,6 +290,7 @@ server=1.1.1.1
 cache-size=1000
 domain-needed
 bogus-priv
+filter-AAAA
 EOF
             systemctl enable dnsmasq >/dev/null 2>&1
             systemctl restart dnsmasq
@@ -458,6 +459,15 @@ EOF
 
     # Разрешаем форвардинг
     iptables -P FORWARD ACCEPT
+
+    # MASQUERADE для клиентов LAN — нужен чтобы прямой трафик (российские IP)
+    # выходил с IP шлюза, а не с клиентского 192.168.x / 10.x адреса
+    WAN_IFACE=$(ip route | awk '/^default/{print $5; exit}')
+    if [[ -n "$WAN_IFACE" ]]; then
+        iptables -t nat -C POSTROUTING -o "$WAN_IFACE" -j MASQUERADE 2>/dev/null || \
+            iptables -t nat -A POSTROUTING -o "$WAN_IFACE" -j MASQUERADE
+        log "MASQUERADE включён на $WAN_IFACE"
+    fi
 
     # Сохраняем правила
     if command -v iptables-save &>/dev/null; then
