@@ -60,6 +60,7 @@ type ServerInfo struct {
 // ServerMetrics метрики сервера
 type ServerMetrics struct {
 	ServerID     string        `json:"server_id"`
+	Port         int           `json:"port"`
 	Timestamp    time.Time     `json:"timestamp"`
 	Latency      time.Duration `json:"latency"`
 	PacketLoss   float64       `json:"packet_loss"`

@@ -24,7 +24,12 @@ func NewDeployer() *Deployer {
 
 // Deploy installs and starts the tunnel server on a remote host via SSH.
 // SSH is assumed to be on port 22. authToken is written to the server config.
-func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, onProgress ProgressFunc) error {
+// tunnelPort is the port the tunnel server will listen on (default 443).
+func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, tunnelPort int, onProgress ProgressFunc) error {
+	if tunnelPort == 0 {
+		tunnelPort = 443
+	}
+	metricsPort := tunnelPort + 1000
 	cfg := &ssh.ClientConfig{
 		User:            sshUser,
 		Auth:            []ssh.AuthMethod{ssh.Password(sshPassword)},
@@ -87,10 +92,10 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, onProgre
 
 	onProgress(33, "Configuring firewall...")
 	// ufw — правила персистентны по умолчанию
-	run("bash -c 'command -v ufw &>/dev/null && ufw --force enable && ufw allow 22/tcp && ufw allow 443/tcp && ufw allow 8443/tcp || true'")
+	run(fmt.Sprintf("bash -c 'command -v ufw &>/dev/null && ufw --force enable && ufw allow 22/tcp && ufw allow %d/tcp && ufw allow %d/tcp || true'", tunnelPort, metricsPort))
 	// iptables — добавляем правила и сохраняем
-	run("bash -c 'iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 443 -j ACCEPT || true'")
-	run("bash -c 'iptables -C INPUT -p tcp --dport 8443 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 8443 -j ACCEPT || true'")
+	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", tunnelPort, tunnelPort))
+	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", metricsPort, metricsPort))
 	// Сохраняем правила iptables для выживания после reboot
 	run("bash -c 'command -v iptables-save &>/dev/null && (mkdir -p /etc/iptables && iptables-save > /etc/iptables/rules.v4) || true'")
 	run("bash -c 'command -v netfilter-persistent &>/dev/null && netfilter-persistent save || true'")
@@ -117,8 +122,8 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, onProgre
 	serverConfig := fmt.Sprintf(`auth_token: %s
 
 server:
-  listen_port: 443
-  metrics_port: 8443
+  listen_port: %d
+  metrics_port: %d
 
 tls:
   cert_path: /opt/tunnel/data/cert.pem
@@ -128,7 +133,7 @@ tls:
 monitoring:
   enabled: true
   metrics_endpoint: /metrics
-`, authToken)
+`, authToken, tunnelPort, metricsPort)
 
 	if err := uploadText("/opt/tunnel/server.yml", serverConfig); err != nil {
 		return fmt.Errorf("config upload failed: %w", err)

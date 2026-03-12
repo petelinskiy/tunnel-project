@@ -181,6 +181,7 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 		Active:  true,
 		Metrics: &models.ServerMetrics{
 			ServerID:  server.ID,
+			Port:      server.Port,
 			Timestamp: time.Now(),
 			Status:    "active",
 		},
@@ -303,13 +304,23 @@ func (m *Manager) checkServersHealth() {
 			addr := fmt.Sprintf("%s:%d", s.Info.Host, s.Info.Port)
 			start := time.Now()
 			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-			if err == nil {
-				conn.Close()
-				latency := time.Since(start)
+			if err != nil {
+				// TCP недоступен — сервер упал, но smux-сессия ещё не закрылась
 				s.mu.Lock()
-				s.Metrics.Latency = latency
+				s.Active = false
+				s.Metrics.Status = "offline"
+				s.Metrics.Latency = 0
 				s.mu.Unlock()
+				log.Printf("Server %s unreachable: %v", s.Info.ID, err)
+				return
 			}
+			conn.Close()
+			latency := time.Since(start)
+			s.mu.Lock()
+			s.Active = true
+			s.Metrics.Status = "active"
+			s.Metrics.Latency = latency
+			s.mu.Unlock()
 
 			fetchServerMetrics(s)
 		}(server)
@@ -444,7 +455,7 @@ func (m *Manager) GetMetrics() []*models.ServerMetrics {
 // ── Server metrics polling ────────────────────────────────────────────────────
 
 func fetchServerMetrics(s *ServerConnection) {
-	metricsPort := s.Info.Port + 8000
+	metricsPort := s.Info.Port + 1000
 	url := fmt.Sprintf("http://%s:%d/metrics", s.Info.Host, metricsPort)
 
 	client := &http.Client{Timeout: 3 * time.Second}

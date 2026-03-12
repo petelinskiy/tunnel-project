@@ -430,6 +430,7 @@
             <thead>
                 <tr>
                     <th>Server</th>
+                    <th>Port</th>
                     <th>Status</th>
                     <th>Latency</th>
                     <th>CPU</th>
@@ -439,7 +440,7 @@
             </thead>
             <tbody id="servers-table">
                 <tr>
-                    <td colspan="6" style="text-align:center;color:#64748b;padding:40px;">
+                    <td colspan="7" style="text-align:center;color:#64748b;padding:40px;">
                         No servers configured. Click "Add Server" to get started.
                     </td>
                 </tr>
@@ -459,8 +460,8 @@
         </div>
 
         <div class="form-group">
-            <label for="server-port">Tunnel Port (default 443)</label>
-            <input type="number" id="server-port" value="443">
+            <label for="server-port">Tunnel Port</label>
+            <input type="number" id="server-port" placeholder="443">
         </div>
 
         <div class="form-group">
@@ -559,20 +560,22 @@
 
     // ── Metrics ────────────────────────────────────────────────────────────────
     function handleMetrics(metrics) {
-        if (!metrics || metrics.length === 0) return;
+        if (!metrics) return;
 
         const active = metrics.filter(m => m.status === 'active').length;
         document.getElementById('active-servers').textContent = active;
 
-        const avgLat = metrics.reduce((s, m) => s + (m.latency / 1e6), 0) / metrics.length;
-        document.getElementById('avg-latency').textContent = Math.round(avgLat) + ' ms';
+        if (metrics.length > 0) {
+            const avgLat = metrics.reduce((s, m) => s + (m.latency / 1e6), 0) / metrics.length;
+            document.getElementById('avg-latency').textContent = Math.round(avgLat) + ' ms';
 
-        const totalTraffic = metrics.reduce((s, m) => s + m.total_traffic, 0);
-        document.getElementById('total-traffic').textContent =
-            (totalTraffic / 1024 / 1024).toFixed(1) + ' MB';
+            const totalTraffic = metrics.reduce((s, m) => s + m.total_traffic, 0);
+            document.getElementById('total-traffic').textContent =
+                (totalTraffic / 1024 / 1024).toFixed(1) + ' MB';
 
-        const totalConns = metrics.reduce((s, m) => s + m.active_conns, 0);
-        document.getElementById('active-conns').textContent = totalConns;
+            const totalConns = metrics.reduce((s, m) => s + m.active_conns, 0);
+            document.getElementById('active-conns').textContent = totalConns;
+        }
 
         updateServersTable(metrics);
         updatePinDropdown(metrics);
@@ -581,7 +584,7 @@
     function updateServersTable(metrics) {
         const tbody = document.getElementById('servers-table');
         if (!metrics.length) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;padding:40px;">No servers configured.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:40px;">No servers configured.</td></tr>`;
             updateBalancingLock(0);
             return;
         }
@@ -589,8 +592,9 @@
             const lat = Math.round(m.latency / 1e6);
             const latClass = lat > 150 ? 'slow' : lat === 0 ? 'down' : '';
             const dot = m.status === 'active' ? 'active' : 'inactive';
-            return `<tr>
+            return `<tr data-id="${m.server_id}">
                 <td><div class="server-status"><div class="status-dot ${dot}"></div>${m.server_id}</div></td>
+                <td>${m.port || '—'}</td>
                 <td>${m.status}</td>
                 <td class="latency ${latClass}">${lat > 0 ? lat + ' ms' : '--'}</td>
                 <td>${(m.cpu_usage || 0).toFixed(1)}%</td>
@@ -598,7 +602,8 @@
                 <td><button class="btn-delete" onclick="deleteServer('${m.server_id}')" title="Remove server">✕</button></td>
             </tr>`;
         }).join('');
-        updateBalancingLock(metrics.length);
+        const activeCount = metrics.filter(m => m.status === 'active').length;
+        updateBalancingLock(activeCount);
     }
 
     function updateBalancingLock(count) {
@@ -626,6 +631,17 @@
             if (!r.ok) {
                 const t = await r.text();
                 showError('Failed to remove server: ' + t);
+            } else {
+                // Мгновенно убираем строку из таблицы, не дожидаясь следующего WS тика
+                const tbody = document.getElementById('servers-table');
+                const row = tbody.querySelector(`tr[data-id="${id}"]`);
+                if (row) row.remove();
+                const remaining = tbody.querySelectorAll('tr[data-id]').length;
+                updateBalancingLock(remaining);
+                if (!tbody.querySelector('tr')) {
+                    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:40px;">No servers configured. Click "Add Server" to get started.</td></tr>`;
+                    updateBalancingLock(0);
+                }
             }
         } catch(e) {
             showError('Error: ' + e);
@@ -805,6 +821,7 @@
 
     // ── Init ───────────────────────────────────────────────────────────────────
     window.addEventListener('load', () => {
+        updateBalancingLock(0);
         connectWebSocket();
         loadBalancing();
     });
