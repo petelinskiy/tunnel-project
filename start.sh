@@ -358,30 +358,21 @@ table ip tunnel-proxy {
         udp dport 53 redirect to :53
         tcp dport 53 redirect to :53
 
-        # TCP → обработка в цепочке REDSOCKS
-        tcp goto REDSOCKS
-    }
-
-    chain REDSOCKS {
         # Локальные и RFC-1918 адреса назначения → напрямую
         ip daddr { 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8,
                    169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16,
                    224.0.0.0/4, 240.0.0.0/4 } return
 
         # Российские IP → напрямую (GeoIP, заполняется ниже)
-        ip daddr @russia return
+        ip protocol tcp ip daddr @russia return
 
-        # Всё остальное → gost (transparent proxy → SOCKS5)
-        redirect to :${REDSOCKS_PORT}
+        # TCP → gost (transparent proxy → SOCKS5)
+        ip protocol tcp redirect to :${REDSOCKS_PORT}
     }
 
     chain POSTROUTING {
         type nat hook postrouting priority srcnat; policy accept;
         oifname "${WAN_IFACE}" masquerade
-    }
-
-    chain FORWARD {
-        type filter hook forward priority filter; policy accept;
     }
 }
 NFTEOF
