@@ -132,8 +132,18 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteServer удаляет сервер
 func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(map[string]string{"error": "not implemented"})
+	vars := mux.Vars(r)
+	id := vars["id"]
+	if id == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.tunnelManager.RemoveServer(id); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "id": id})
 }
 
 // handleGetMetrics возвращает метрики

@@ -98,6 +98,18 @@
         .latency.slow { color: #f59e0b; }
         .latency.down { color: #ef4444; }
 
+        .btn-delete {
+            background: none;
+            border: 1px solid #334155;
+            color: #64748b;
+            border-radius: 4px;
+            padding: 3px 8px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+        .btn-delete:hover { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.08); }
+
         /* Balancing control */
         .balancing-bar {
             display: flex;
@@ -379,11 +391,12 @@
                     <th>Latency</th>
                     <th>CPU</th>
                     <th>Traffic</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="servers-table">
                 <tr>
-                    <td colspan="5" style="text-align:center;color:#64748b;padding:40px;">
+                    <td colspan="6" style="text-align:center;color:#64748b;padding:40px;">
                         No servers configured. Click "Add Server" to get started.
                     </td>
                 </tr>
@@ -513,7 +526,8 @@
     function updateServersTable(metrics) {
         const tbody = document.getElementById('servers-table');
         if (!metrics.length) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:40px;">No servers configured.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;padding:40px;">No servers configured.</td></tr>`;
+            updateBalancingLock(0);
             return;
         }
         tbody.innerHTML = metrics.map(m => {
@@ -526,8 +540,31 @@
                 <td class="latency ${latClass}">${lat > 0 ? lat + ' ms' : '--'}</td>
                 <td>${(m.cpu_usage || 0).toFixed(1)}%</td>
                 <td>${((m.total_traffic || 0) / 1024 / 1024).toFixed(2)} MB</td>
+                <td><button class="btn-delete" onclick="deleteServer('${m.server_id}')" title="Remove server">✕</button></td>
             </tr>`;
         }).join('');
+        updateBalancingLock(metrics.length);
+    }
+
+    function updateBalancingLock(count) {
+        const disabled = count < 2;
+        document.getElementById('btn-rr').disabled = disabled;
+        document.getElementById('btn-pin').disabled = disabled;
+        document.getElementById('pin-select').disabled = disabled;
+        document.querySelector('.balancing-bar').style.opacity = disabled ? '0.45' : '1';
+    }
+
+    async function deleteServer(id) {
+        if (!confirm(`Remove server "${id}"?`)) return;
+        try {
+            const r = await fetch(`/api/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            if (!r.ok) {
+                const t = await r.text();
+                alert('Error: ' + t);
+            }
+        } catch(e) {
+            alert('Error: ' + e);
+        }
     }
 
     // ── Deploy progress ────────────────────────────────────────────────────────

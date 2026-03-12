@@ -361,6 +361,42 @@ func (m *Manager) AddServer(server models.ServerInfo) {
 	}()
 }
 
+// RemoveServer отключает сервер и удаляет его из конфига.
+func (m *Manager) RemoveServer(id string) error {
+	m.mu.Lock()
+	conn, ok := m.servers[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("server %s not found", id)
+	}
+	delete(m.servers, id)
+
+	// Убираем из конфига
+	filtered := m.config.Servers[:0]
+	for _, s := range m.config.Servers {
+		if s.ID != id {
+			filtered = append(filtered, s)
+		}
+	}
+	m.config.Servers = filtered
+	saveErr := m.saveConfig()
+
+	// Если был pinned на этот сервер — сбрасываем
+	if mode, pinnedID := m.balancer.GetMode(); mode == "pinned" && pinnedID == id {
+		m.balancer.SetPinned("")
+	}
+	m.mu.Unlock()
+
+	// Закрываем сессию вне лока
+	conn.mu.Lock()
+	if conn.Session != nil {
+		conn.Session.Close()
+	}
+	conn.mu.Unlock()
+
+	return saveErr
+}
+
 // saveConfig записывает текущий конфиг обратно в YAML-файл
 func (m *Manager) saveConfig() error {
 	if m.configPath == "" {
