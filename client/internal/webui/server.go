@@ -20,6 +20,7 @@ type Server struct {
 	tunnelManager *tunnel.Manager
 	router        *mux.Router
 	wsHub         *WebSocketHub
+	clientMetrics *clientMetricsCollector
 }
 
 // NewServer создает новый веб-сервер
@@ -29,6 +30,7 @@ func NewServer(port int, tunnelManager *tunnel.Manager) *Server {
 		tunnelManager: tunnelManager,
 		router:        mux.NewRouter(),
 		wsHub:         NewWebSocketHub(),
+		clientMetrics: newClientMetricsCollector(),
 	}
 
 	s.setupRoutes()
@@ -244,9 +246,11 @@ func (s *Server) metricsStreamer() {
 
 	for range ticker.C {
 		metrics := s.tunnelManager.GetMetrics()
+		client := s.clientMetrics.collect()
 		data, _ := json.Marshal(map[string]interface{}{
 			"type":    "metrics",
 			"metrics": metrics,
+			"client":  client,
 		})
 		s.wsHub.broadcast <- data
 	}

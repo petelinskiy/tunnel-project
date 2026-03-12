@@ -174,6 +174,71 @@
             min-height: 18px;
         }
         .progress-msg.error { color: #f87171; }
+
+        /* Client metrics */
+        .client-section {
+            background: #1e293b;
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            margin-bottom: 40px;
+        }
+
+        .client-section .section-header { margin-bottom: 20px; }
+
+        .client-iface-badge {
+            font-size: 12px;
+            color: #64748b;
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+        }
+
+        .client-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 16px;
+        }
+
+        .client-card {
+            background: #0f172a;
+            padding: 18px 20px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+        }
+
+        .client-card .stat-label { font-size: 12px; color: #64748b; margin-bottom: 6px; }
+        .client-card .stat-value { font-size: 24px; font-weight: 700; color: #f1f5f9; margin-bottom: 10px; }
+
+        .mini-bar-wrap {
+            background: #1e293b;
+            border-radius: 4px;
+            height: 6px;
+            overflow: hidden;
+        }
+
+        .mini-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease, background 0.5s ease;
+            width: 0%;
+            background: #3b82f6;
+        }
+
+        .mini-bar.warn  { background: #f59e0b; }
+        .mini-bar.alert { background: #ef4444; }
+
+        .net-dir {
+            font-size: 11px;
+            color: #475569;
+            margin-bottom: 4px;
+        }
+
+        @media (max-width: 900px) {
+            .client-grid { grid-template-columns: 1fr 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -199,6 +264,40 @@
         <div class="stat-card">
             <div class="stat-label">Active Connections</div>
             <div class="stat-value" id="active-conns">0</div>
+        </div>
+    </div>
+
+    <!-- Client node metrics -->
+    <div class="client-section">
+        <div class="section-header">
+            <h2>Client Node</h2>
+            <span class="client-iface-badge" id="client-iface">—</span>
+        </div>
+        <div class="client-grid">
+            <div class="client-card">
+                <div class="stat-label">CPU</div>
+                <div class="stat-value" id="client-cpu">—</div>
+                <div class="mini-bar-wrap">
+                    <div class="mini-bar" id="cpu-bar"></div>
+                </div>
+            </div>
+            <div class="client-card">
+                <div class="stat-label">RAM</div>
+                <div class="stat-value" id="client-ram">—</div>
+                <div class="mini-bar-wrap">
+                    <div class="mini-bar" id="ram-bar"></div>
+                </div>
+            </div>
+            <div class="client-card">
+                <div class="net-dir">↓ Incoming</div>
+                <div class="stat-label">RX</div>
+                <div class="stat-value" id="client-rx">—</div>
+            </div>
+            <div class="client-card">
+                <div class="net-dir">↑ Outgoing</div>
+                <div class="stat-label">TX</div>
+                <div class="stat-value" id="client-tx">—</div>
+            </div>
         </div>
     </div>
 
@@ -280,7 +379,10 @@
         ws.onmessage = (e) => {
             const msg = JSON.parse(e.data);
             switch (msg.type) {
-                case 'metrics':        handleMetrics(msg.metrics); break;
+                case 'metrics':
+                    handleMetrics(msg.metrics);
+                    if (msg.client) handleClientMetrics(msg.client);
+                    break;
                 case 'deploy_progress': handleDeployProgress(msg.progress, msg.message); break;
                 case 'deploy_done':    handleDeployDone(); break;
                 case 'deploy_error':   handleDeployError(msg.message); break;
@@ -288,6 +390,39 @@
         };
 
         ws.onclose = () => setTimeout(connectWebSocket, 3000);
+    }
+
+    // ── Client metrics ─────────────────────────────────────────────────────────
+    function handleClientMetrics(c) {
+        // Interface name
+        document.getElementById('client-iface').textContent = c.net_iface || '—';
+
+        // CPU
+        const cpu = c.cpu.toFixed(1);
+        document.getElementById('client-cpu').textContent = cpu + '%';
+        setBar('cpu-bar', c.cpu);
+
+        // RAM
+        const ram = c.mem_used.toFixed(1);
+        document.getElementById('client-ram').textContent = ram + '%';
+        setBar('ram-bar', c.mem_used);
+
+        // Network
+        document.getElementById('client-rx').textContent = formatBps(c.net_rx_bps);
+        document.getElementById('client-tx').textContent = formatBps(c.net_tx_bps);
+    }
+
+    function setBar(id, pct) {
+        const bar = document.getElementById(id);
+        bar.style.width = Math.min(pct, 100).toFixed(1) + '%';
+        bar.className = 'mini-bar' + (pct >= 90 ? ' alert' : pct >= 70 ? ' warn' : '');
+    }
+
+    function formatBps(bps) {
+        if (bps >= 1073741824) return (bps / 1073741824).toFixed(2) + ' GB/s';
+        if (bps >= 1048576)    return (bps / 1048576).toFixed(1)    + ' MB/s';
+        if (bps >= 1024)       return (bps / 1024).toFixed(0)        + ' KB/s';
+        return bps + ' B/s';
     }
 
     // ── Metrics ────────────────────────────────────────────────────────────────
