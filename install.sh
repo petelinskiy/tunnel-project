@@ -206,20 +206,40 @@ fi
 if command -v apt-get &>/dev/null; then
     PKG_INSTALL="apt-get install -y -q"
     PKG_UPDATE="apt-get update -q"
+    PKG_MANAGER="apt"
+elif command -v pacman &>/dev/null; then
+    PKG_INSTALL="pacman -S --noconfirm --needed"
+    PKG_UPDATE="pacman -Sy --noconfirm"
+    PKG_MANAGER="pacman"
 elif command -v dnf &>/dev/null; then
     PKG_INSTALL="dnf install -y -q"
     PKG_UPDATE="dnf check-update -q || true"
+    PKG_MANAGER="dnf"
 elif command -v yum &>/dev/null; then
     PKG_INSTALL="yum install -y -q"
     PKG_UPDATE="yum check-update -q || true"
+    PKG_MANAGER="yum"
 else
     warn "Не удалось определить пакетный менеджер."
     PKG_INSTALL=""
+    PKG_MANAGER=""
 fi
 
 # ─── Шаг 1: Git + клонирование репозитория ────────────────────────────────────
 
 step "Загрузка проекта из репозитория"
+
+# На Arch: устанавливаем базовые инструменты если отсутствуют
+if [[ "$PKG_MANAGER" == "pacman" ]]; then
+    ARCH_PKGS=""
+    command -v curl  &>/dev/null || ARCH_PKGS="$ARCH_PKGS curl"
+    command -v git   &>/dev/null || ARCH_PKGS="$ARCH_PKGS git"
+    if [[ -n "$ARCH_PKGS" ]]; then
+        info "Устанавливаем базовые пакеты: $ARCH_PKGS"
+        $PKG_UPDATE >/dev/null 2>&1
+        $PKG_INSTALL $ARCH_PKGS >/dev/null 2>&1
+    fi
+fi
 
 # Устанавливаем git если нет
 if ! command -v git &>/dev/null; then
@@ -261,7 +281,12 @@ step "Установка и проверка Docker"
 if ! command -v docker &>/dev/null; then
     if [[ -n "$PKG_INSTALL" ]]; then
         info "Docker не найден, устанавливаем..."
-        curl -fsSL https://get.docker.com | sh
+        if [[ "$PKG_MANAGER" == "pacman" ]]; then
+            $PKG_UPDATE >/dev/null 2>&1
+            $PKG_INSTALL docker >/dev/null 2>&1
+        else
+            curl -fsSL https://get.docker.com | sh
+        fi
         systemctl enable docker
         systemctl start docker
         log "Docker установлен"
@@ -441,6 +466,8 @@ EOF
             info "Устанавливаем dnsmasq..."
             $PKG_UPDATE >/dev/null 2>&1
             $PKG_INSTALL dnsmasq >/dev/null 2>&1 || warn "dnsmasq не удалось установить"
+            # На Arch dnsmasq.d не создаётся автоматически
+            mkdir -p /etc/dnsmasq.d
         fi
 
         if command -v dnsmasq &>/dev/null; then
@@ -476,6 +503,9 @@ EOF
     GEOIP_READY=false
 
     if [[ -n "$PKG_INSTALL" ]]; then
+        if [[ "$PKG_MANAGER" == "pacman" ]]; then
+            $PKG_UPDATE >/dev/null 2>&1
+        fi
         $PKG_INSTALL nftables >/dev/null 2>&1 && log "nftables установлен" || warn "nftables не удалось установить"
     fi
 
