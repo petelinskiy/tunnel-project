@@ -612,6 +612,7 @@
     // ── Balancing ──────────────────────────────────────────────────────────────
     let currentMode = 'round-robin';
     let availableServers = [];
+    let pendingPinnedID = '';   // ожидает наполнения dropdown
 
     async function loadBalancing() {
         try {
@@ -627,7 +628,13 @@
         document.getElementById('btn-pin').classList.toggle('active', mode === 'pinned');
         const sel = document.getElementById('pin-select');
         sel.classList.toggle('visible', mode === 'pinned');
-        if (mode === 'pinned' && serverID) sel.value = serverID;
+        if (mode === 'pinned' && serverID) {
+            // Пробуем выставить значение; если опция ещё не добавлена — запоминаем
+            sel.value = serverID;
+            if (sel.value !== serverID) pendingPinnedID = serverID;
+        } else {
+            pendingPinnedID = '';
+        }
     }
 
     function setMode(mode) {
@@ -666,7 +673,7 @@
     // Обновляем список серверов в дропдауне при изменении метрик
     function updatePinDropdown(metrics) {
         const sel = document.getElementById('pin-select');
-        const prev = sel.value;
+        const prev = sel.value || pendingPinnedID;
         // Оставляем только первый placeholder option
         while (sel.options.length > 1) sel.remove(1);
         metrics.forEach(m => {
@@ -675,7 +682,10 @@
             opt.textContent = m.server_id + (m.status === 'active' ? ' ✓' : ' ✗');
             sel.appendChild(opt);
         });
-        if (prev) sel.value = prev;
+        if (prev) {
+            sel.value = prev;
+            if (sel.value === prev) pendingPinnedID = '';  // опция нашлась
+        }
     }
 
     // ── Init ───────────────────────────────────────────────────────────────────
