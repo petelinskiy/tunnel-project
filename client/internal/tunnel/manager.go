@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sort"
 	"time"
 
 	smux "github.com/xtaci/smux"
@@ -329,6 +330,9 @@ func (m *Manager) GetServers() []*ServerConnection {
 	for _, s := range m.servers {
 		servers = append(servers, s)
 	}
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].Info.ID < servers[j].Info.ID
+	})
 	return servers
 }
 
