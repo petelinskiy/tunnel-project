@@ -18,7 +18,7 @@ REDSOCKS_PORT=12345
 WEBUI_PORT=8080
 
 STEP=0
-TOTAL_STEPS=7
+TOTAL_STEPS=6
 STEP_START=0
 SCRIPT_START=$(date +%s)
 
@@ -305,71 +305,140 @@ EOF
 
     step_done
 
-    # ─── Шаг 6: GeoIP (Россия напрямую) ──────────────────────────────────────
+    # ─── Шаг 6: nftables + GeoIP ─────────────────────────────────────────────
 
-    step "GeoIP: IP-адреса России напрямую, остальное — в туннель"
+    step "nftables: правила маршрутизации + GeoIP (Россия напрямую)"
 
+    WAN_IFACE=$(ip route | awk '/^default/{print $5; exit}')
     GEOIP_READY=false
     GEOIP_COUNT=0
 
-    if [[ -n "$PKG_INSTALL" ]] && $PKG_INSTALL ipset >/dev/null 2>&1; then
-        log "ipset установлен"
+    # Устанавливаем nftables
+    if [[ -n "$PKG_INSTALL" ]]; then
+        $PKG_INSTALL nftables >/dev/null 2>&1 && log "nftables установлен" || warn "nftables не удалось установить"
+    fi
 
-        # Скрипт обновления — скачивает список и атомарно обновляет ipset
-        cat > /usr/local/bin/update-geoip-ru.sh << 'UPDATEEOF'
+    # Удаляем устаревшие iptables-правила нашей цепочки REDSOCKS (если были)
+    iptables -t nat -F REDSOCKS 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp -j REDSOCKS 2>/dev/null || true
+    iptables -t nat -D PREROUTING -s 172.16.0.0/12 -p udp --dport 53 -j RETURN 2>/dev/null || true
+    iptables -t nat -D PREROUTING -s 172.16.0.0/12 -p tcp --dport 53 -j RETURN 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 53 -j REDIRECT --to-ports 53 2>/dev/null || true
+    iptables -t nat -X REDSOCKS 2>/dev/null || true
+    log "Старые iptables-правила очищены"
+
+    # Удаляем устаревший ipset-сервис если он был
+    systemctl stop ipset-russia 2>/dev/null || true
+    systemctl disable ipset-russia 2>/dev/null || true
+    rm -f /etc/systemd/system/ipset-russia.service
+
+    # Удаляем нашу старую nftables-таблицу (идемпотентно при повторном запуске)
+    nft delete table ip tunnel-proxy 2>/dev/null || true
+
+    # Применяем nftables-правила — одна таблица "tunnel-proxy", не трогаем Docker/nat
+    # Используем отдельную таблицу чтобы не конфликтовать с правилами Docker
+    nft -f - << NFTEOF
+table ip tunnel-proxy {
+
+    # Нативный nftables-set для GeoIP — заменяет ipset (быстрее, без модуля ядра)
+    set russia {
+        type ipv4_addr
+        flags interval
+        auto-merge
+    }
+
+    chain PREROUTING {
+        type nat hook prerouting priority dstnat; policy accept;
+
+        # Docker-сети: DNS и TCP идут напрямую — BuildKit должен резолвить имена
+        ip saddr 172.16.0.0/12 return
+
+        # DNS клиентов → dnsmasq
+        udp dport 53 redirect to :53
+        tcp dport 53 redirect to :53
+
+        # TCP → обработка в цепочке REDSOCKS
+        tcp goto REDSOCKS
+    }
+
+    chain REDSOCKS {
+        # Локальные и RFC-1918 адреса назначения → напрямую
+        ip daddr { 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8,
+                   169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16,
+                   224.0.0.0/4, 240.0.0.0/4 } return
+
+        # Российские IP → напрямую (GeoIP, заполняется ниже)
+        ip daddr @russia return
+
+        # Всё остальное → gost (transparent proxy → SOCKS5)
+        redirect to :${REDSOCKS_PORT}
+    }
+
+    chain POSTROUTING {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "${WAN_IFACE}" masquerade
+    }
+
+    chain FORWARD {
+        type filter hook forward priority filter; policy accept;
+    }
+}
+NFTEOF
+
+    log "nftables-таблица tunnel-proxy применена (WAN: ${WAN_IFACE})"
+
+    # ── GeoIP: загружаем российские IP в nftables-set ─────────────────────────
+
+    # Скрипт обновления GeoIP — использует nftables set вместо ipset
+    cat > /usr/local/bin/update-geoip-ru.sh << 'UPDATEEOF'
 #!/bin/bash
-IPSET_NAME="russia"
+set -euo pipefail
+
+TABLE="tunnel-proxy"
+SET="russia"
 URL="https://www.ipdeny.com/ipblocks/data/countries/ru.zone"
 
-ipset list "$IPSET_NAME" &>/dev/null || ipset create "$IPSET_NAME" hash:net maxelem 131072
+if ! nft list set ip "$TABLE" "$SET" &>/dev/null; then
+    echo "GeoIP: nftables-set '$SET' в таблице '$TABLE' не найден — запустите start.sh" >&2
+    exit 1
+fi
 
 TMPFILE=$(mktemp)
+NFT_SCRIPT=$(mktemp)
+trap 'rm -f "$TMPFILE" "$NFT_SCRIPT"' EXIT
+
 if ! curl -fsSL --max-time 60 -o "$TMPFILE" "$URL"; then
-    rm -f "$TMPFILE"
     echo "GeoIP: не удалось скачать список RU" >&2
     exit 1
 fi
 
-TMP_SET="${IPSET_NAME}_tmp"
-ipset destroy "$TMP_SET" 2>/dev/null || true
-ipset create "$TMP_SET" hash:net maxelem 131072
-
+# Атомарная замена содержимого set: flush + add в одной транзакции nft -f
 count=0
-while IFS= read -r prefix; do
-    [[ -z "$prefix" || "$prefix" == \#* ]] && continue
-    ipset add "$TMP_SET" "$prefix" 2>/dev/null && count=$((count+1))
-done < "$TMPFILE"
-rm -f "$TMPFILE"
+{
+    echo "flush set ip $TABLE $SET"
+    printf "add element ip %s %s { " "$TABLE" "$SET"
+    while IFS= read -r prefix; do
+        [[ -z "$prefix" || "$prefix" == \#* ]] && continue
+        printf "%s, " "$prefix"
+        count=$((count + 1))
+    done < "$TMPFILE"
+    printf "}\n"
+} > "$NFT_SCRIPT"
 
-ipset swap "$TMP_SET" "$IPSET_NAME"
-ipset destroy "$TMP_SET" 2>/dev/null || true
+nft -f "$NFT_SCRIPT"
 
-mkdir -p /etc/iptables
-ipset save "$IPSET_NAME" > /etc/iptables/ipset-russia.save
+# Сохраняем весь ruleset (включая содержимое set) для восстановления после reboot
+nft list ruleset > /etc/nftables.conf
+
 echo "GeoIP RU: обновлено $count префиксов"
 UPDATEEOF
-        chmod +x /usr/local/bin/update-geoip-ru.sh
+    chmod +x /usr/local/bin/update-geoip-ru.sh
 
-        # Сервис восстановления ipset после перезагрузки (должен запуститься ДО iptables)
-        cat > /etc/systemd/system/ipset-russia.service << 'EOF'
+    # Таймер ежедневного обновления GeoIP
+    cat > /etc/systemd/system/update-geoip-ru.service << 'EOF'
 [Unit]
-Description=Restore Russia GeoIP ipset
-Before=netfilter-persistent.service iptables.service
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'if [ -f /etc/iptables/ipset-russia.save ]; then ipset restore -! < /etc/iptables/ipset-russia.save; else /usr/local/bin/update-geoip-ru.sh; fi'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Сервис + таймер ежедневного обновления
-        cat > /etc/systemd/system/update-geoip-ru.service << 'EOF'
-[Unit]
-Description=Update Russia GeoIP ipset
+Description=Update Russia GeoIP nftables set
 After=network-online.target
 Wants=network-online.target
 
@@ -378,7 +447,7 @@ Type=oneshot
 ExecStart=/usr/local/bin/update-geoip-ru.sh
 EOF
 
-        cat > /etc/systemd/system/update-geoip-ru.timer << 'EOF'
+    cat > /etc/systemd/system/update-geoip-ru.timer << 'EOF'
 [Unit]
 Description=Daily Russia GeoIP update
 
@@ -391,98 +460,24 @@ RandomizedDelaySec=3600
 WantedBy=timers.target
 EOF
 
-        systemctl daemon-reload
-        systemctl enable ipset-russia >/dev/null 2>&1
-        systemctl enable update-geoip-ru.timer >/dev/null 2>&1
+    systemctl daemon-reload
+    systemctl enable update-geoip-ru.timer >/dev/null 2>&1
 
-        info "Загружаем список IP-диапазонов России (~6000 префиксов)..."
-        if /usr/local/bin/update-geoip-ru.sh; then
-            GEOIP_COUNT=$(ipset list russia 2>/dev/null | grep -c '^[0-9]' || echo 0)
-            log "GeoIP: загружено $GEOIP_COUNT IP-диапазонов России"
-            GEOIP_READY=true
-        else
-            warn "Не удалось загрузить GeoIP — весь трафик пойдёт через туннель"
-        fi
+    # Первая загрузка GeoIP
+    info "Загружаем список IP-диапазонов России..."
+    if /usr/local/bin/update-geoip-ru.sh 2>&1 | tail -1 | grep -q "обновлено"; then
+        GEOIP_COUNT=$(nft list set ip tunnel-proxy russia 2>/dev/null \
+            | grep -c '\.' || echo 0)
+        log "GeoIP: загружено российских IP-диапазонов в nftables-set"
+        GEOIP_READY=true
     else
-        warn "ipset не удалось установить — GeoIP недоступен"
+        warn "Не удалось загрузить GeoIP — весь трафик пойдёт через туннель"
     fi
 
-    step_done
-
-    # ─── Шаг 7: iptables ──────────────────────────────────────────────────────
-
-    step "Настройка iptables и сохранение правил"
-
-    # Очищаем старые правила
-    iptables -t nat -F REDSOCKS 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp -j REDSOCKS 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp --dport 53 -j REDIRECT --to-ports 53 2>/dev/null || true
-    iptables -t nat -X REDSOCKS 2>/dev/null || true
-
-    info "Создаём цепочку REDSOCKS..."
-    iptables -t nat -N REDSOCKS
-
-    # Docker-контейнеры исключаем по источнику — иначе деплой через SSH
-    # из tunnel-client уходит в redsocks (нет серверов) и падает с "connection refused"
-    iptables -t nat -A REDSOCKS -s 172.16.0.0/12 -j RETURN
-
-    # Локальный трафик по назначению — пропускаем
-    for NET in 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4; do
-        iptables -t nat -A REDSOCKS -d "$NET" -j RETURN
-    done
-    log "Локальные и Docker-сети исключены из туннеля"
-
-    # Российские IP → напрямую (обход туннеля)
-    if [[ "$GEOIP_READY" == true ]]; then
-        iptables -t nat -A REDSOCKS -m set --match-set russia dst -j RETURN
-        log "GeoIP: $GEOIP_COUNT российских IP-диапазонов идут напрямую"
-    fi
-
-    # Весь остальной TCP → redsocks
-    iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports "$REDSOCKS_PORT"
-
-    # DNS клиентов → dnsmasq
-    # Docker-контейнеры исключаем: dnsmasq не слушает на docker0,
-    # поэтому BuildKit не может резолвить имена при сборке образов
-    if [[ "$DNS_READY" == true ]]; then
-        iptables -t nat -A PREROUTING -s 172.16.0.0/12 -p udp --dport 53 -j RETURN
-        iptables -t nat -A PREROUTING -s 172.16.0.0/12 -p tcp --dport 53 -j RETURN
-        iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53
-        iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-ports 53
-        log "DNS клиентов перехвачен → dnsmasq (Docker-сети исключены)"
-    fi
-
-    # Применяем к входящему трафику
-    iptables -t nat -A PREROUTING -p tcp -j REDSOCKS
-    log "Весь входящий TCP → REDSOCKS → SOCKS5"
-
-    # Разрешаем форвардинг
-    iptables -P FORWARD ACCEPT
-
-    # MASQUERADE для клиентов LAN — нужен чтобы прямой трафик (российские IP)
-    # выходил с IP шлюза, а не с клиентского 192.168.x / 10.x адреса
-    WAN_IFACE=$(ip route | awk '/^default/{print $5; exit}')
-    if [[ -n "$WAN_IFACE" ]]; then
-        iptables -t nat -C POSTROUTING -o "$WAN_IFACE" -j MASQUERADE 2>/dev/null || \
-            iptables -t nat -A POSTROUTING -o "$WAN_IFACE" -j MASQUERADE
-        log "MASQUERADE включён на $WAN_IFACE"
-    fi
-
-    # Сохраняем правила
-    if command -v iptables-save &>/dev/null; then
-        if command -v apt-get &>/dev/null; then
-            info "Устанавливаем iptables-persistent..."
-            $PKG_INSTALL iptables-persistent >/dev/null 2>&1 || true
-            mkdir -p /etc/iptables
-            iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-        elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-            $PKG_INSTALL iptables-services >/dev/null 2>&1 || true
-            iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
-            systemctl enable iptables >/dev/null 2>&1 || true
-        fi
-        log "Правила сохранены — переживут перезагрузку"
-    fi
+    # Сохраняем финальный ruleset и включаем nftables для автозапуска
+    nft list ruleset > /etc/nftables.conf
+    systemctl enable nftables >/dev/null 2>&1 || true
+    log "Правила сохранены в /etc/nftables.conf — переживут перезагрузку"
 
     step_done
 
@@ -513,12 +508,13 @@ if [[ "$GATEWAY_MODE" == true ]]; then
     fi
     echo ""
     if [[ "$GEOIP_READY" == true ]]; then
-        echo -e "  Российские IP ($GEOIP_COUNT диапазонов) → ${GREEN}напрямую${NC}"
+        echo -e "  Российские IP → ${GREEN}напрямую${NC}  (nftables-set, обновляется ежедневно)"
         echo -e "  Зарубежный трафик → ${GREEN}туннель${NC}"
     else
         echo -e "  Весь TCP-трафик устройств пойдёт через туннель."
     fi
     echo -e "  Локальный LAN-трафик (10.x / 192.168.x / 172.16.x) идёт напрямую."
+    echo -e "  Firewall: ${GREEN}nftables${NC} (таблица tunnel-proxy)"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 fi
