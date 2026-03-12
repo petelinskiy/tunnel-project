@@ -121,7 +121,7 @@ func (s *Server) acceptLoop() {
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
 
-	wsConn, err := transport.ServerUpgrade(conn)
+	wsConn, err := transport.ServerUpgrade(conn, s.config.AuthToken)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return

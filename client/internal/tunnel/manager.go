@@ -2,11 +2,13 @@ package tunnel
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	mrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -55,7 +57,26 @@ func NewManager(config *models.ClientConfig, configPath string) *Manager {
 	}
 
 	m.balancer = NewLoadBalancer(m, config.Balancing.Strategy)
+
+	// Генерируем токен если его нет — сохраняем в конфиг сразу
+	if config.Tunnel.AuthToken == "" {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err == nil {
+			config.Tunnel.AuthToken = hex.EncodeToString(b)
+			if err := m.saveConfig(); err != nil {
+				log.Printf("Warning: failed to save generated auth token: %v", err)
+			} else {
+				log.Printf("Generated new auth token and saved to config")
+			}
+		}
+	}
+
 	return m
+}
+
+// GetAuthToken возвращает токен аутентификации для передачи деплойеру
+func (m *Manager) GetAuthToken() string {
+	return m.config.Tunnel.AuthToken
 }
 
 // Start запускает менеджер
@@ -96,14 +117,14 @@ func (m *Manager) pickSNI(host string) string {
 	if len(list) == 0 {
 		return host
 	}
-	return list[rand.Intn(len(list))]
+	return list[mrand.Intn(len(list))]
 }
 
 // connectToServer устанавливает uTLS соединение с Chrome fingerprint и запускает smux
 func (m *Manager) connectToServer(server models.ServerInfo) error {
 	// Jitter: случайная задержка перед подключением
 	if ms := m.config.Tunnel.JitterMaxMs; ms > 0 {
-		delay := time.Duration(rand.Intn(ms)) * time.Millisecond
+		delay := time.Duration(mrand.Intn(ms)) * time.Millisecond
 		log.Printf("Jitter delay: %v before connecting to %s:%d", delay, server.Host, server.Port)
 		select {
 		case <-time.After(delay):
@@ -134,7 +155,7 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 	}
 
 	// WebSocket upgrade поверх TLS — трафик выглядит как браузерный WebSocket
-	wsConn, err := transport.ClientUpgrade(uconn, sni)
+	wsConn, err := transport.ClientUpgrade(uconn, sni, m.config.Tunnel.AuthToken)
 	if err != nil {
 		uconn.Close()
 		return fmt.Errorf("WebSocket upgrade: %w", err)

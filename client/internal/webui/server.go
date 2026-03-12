@@ -220,7 +220,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		d := deploy.NewDeployer()
-		err := d.Deploy(req.Host, req.SSHUser, req.SSHPass, func(progress int, msg string) {
+		err := d.Deploy(req.Host, req.SSHUser, req.SSHPass, s.tunnelManager.GetAuthToken(), func(progress int, msg string) {
 			log.Printf("[deploy %s] %d%% %s", serverID, progress, msg)
 			broadcast(map[string]interface{}{
 				"type":     "deploy_progress",

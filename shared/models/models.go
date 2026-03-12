@@ -13,6 +13,7 @@ type ClientConfig struct {
 	Tunnel struct {
 		SNIList     []string `yaml:"sni_list"`      // домены для маскировки SNI
 		JitterMaxMs int      `yaml:"jitter_max_ms"` // макс. задержка перед подключением (мс)
+		AuthToken   string   `yaml:"auth_token"`    // общий секрет с серверами
 	} `yaml:"tunnel"`
 
 	Balancing struct {
@@ -26,6 +27,8 @@ type ClientConfig struct {
 
 // ServerConfig конфигурация сервера
 type ServerConfig struct {
+	AuthToken string `yaml:"auth_token"` // общий секрет с клиентами
+
 	Server struct {
 		ListenPort  int `yaml:"listen_port"`
 		MetricsPort int `yaml:"metrics_port"`

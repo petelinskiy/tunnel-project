@@ -23,8 +23,8 @@ func NewDeployer() *Deployer {
 }
 
 // Deploy installs and starts the tunnel server on a remote host via SSH.
-// SSH is assumed to be on port 22.
-func (d *Deployer) Deploy(host, sshUser, sshPassword string, onProgress ProgressFunc) error {
+// SSH is assumed to be on port 22. authToken is written to the server config.
+func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, onProgress ProgressFunc) error {
 	cfg := &ssh.ClientConfig{
 		User:            sshUser,
 		Auth:            []ssh.AuthMethod{ssh.Password(sshPassword)},
@@ -114,7 +114,9 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword string, onProgress Progress
 	}
 
 	onProgress(60, "Writing server configuration...")
-	serverConfig := `server:
+	serverConfig := fmt.Sprintf(`auth_token: %s
+
+server:
   listen_port: 443
   metrics_port: 8443
 
@@ -126,7 +128,7 @@ tls:
 monitoring:
   enabled: true
   metrics_endpoint: /metrics
-`
+`, authToken)
 
 	if err := uploadText("/opt/tunnel/server.yml", serverConfig); err != nil {
 		return fmt.Errorf("config upload failed: %w", err)

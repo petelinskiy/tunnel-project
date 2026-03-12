@@ -34,7 +34,8 @@ type WSConn struct {
 // ClientUpgrade performs the WebSocket handshake from the client side
 // over an already-established (TLS) conn.
 // host is placed in the Host header and should match the SNI.
-func ClientUpgrade(conn net.Conn, host string) (*WSConn, error) {
+// token is sent as X-Tunnel-Token header for server-side authentication.
+func ClientUpgrade(conn net.Conn, host, token string) (*WSConn, error) {
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("ws key: %w", err)
@@ -47,6 +48,7 @@ func ClientUpgrade(conn net.Conn, host string) (*WSConn, error) {
 		"Connection: Upgrade\r\n" +
 		"Sec-WebSocket-Key: " + keyB64 + "\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
+		"X-Tunnel-Token: " + token + "\r\n" +
 		"\r\n"
 
 	if _, err := conn.Write([]byte(req)); err != nil {
@@ -84,10 +86,11 @@ func ClientUpgrade(conn net.Conn, host string) (*WSConn, error) {
 var FallbackHandler func(conn net.Conn, method, path string)
 
 // ServerUpgrade reads the HTTP request and performs the WebSocket handshake.
-// Returns (wsConn, nil) on a valid WebSocket upgrade.
-// Returns (nil, nil) if not a WebSocket request — FallbackHandler (or a default page) is served.
+// token is the expected auth token; empty string disables auth check.
+// Returns (wsConn, nil) on a valid WebSocket upgrade with correct token.
+// Returns (nil, nil) if not a WebSocket request or token mismatch — fake page is served.
 // Returns (nil, err) on I/O errors.
-func ServerUpgrade(conn net.Conn) (*WSConn, error) {
+func ServerUpgrade(conn net.Conn, token string) (*WSConn, error) {
 	br := bufio.NewReader(conn)
 
 	// Read and parse request line (e.g. "GET /about HTTP/1.1\r\n")
@@ -107,6 +110,7 @@ func ServerUpgrade(conn net.Conn) (*WSConn, error) {
 
 	isUpgrade := false
 	wsKey := ""
+	clientToken := ""
 
 	// Read headers until blank line
 	for {
@@ -124,6 +128,19 @@ func ServerUpgrade(conn net.Conn) (*WSConn, error) {
 		if strings.HasPrefix(lower, "sec-websocket-key:") {
 			wsKey = strings.TrimSpace(line[len("sec-websocket-key:"):])
 		}
+		if strings.HasPrefix(lower, "x-tunnel-token:") {
+			clientToken = strings.TrimSpace(line[len("x-tunnel-token:"):])
+		}
+	}
+
+	// Token check: если задан — клиент обязан прислать правильный
+	if token != "" && clientToken != token {
+		if FallbackHandler != nil {
+			FallbackHandler(conn, method, urlPath)
+		} else {
+			serveFakePage(conn)
+		}
+		return nil, nil
 	}
 
 	if !isUpgrade {
