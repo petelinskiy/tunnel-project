@@ -164,6 +164,49 @@
         .pin-select.visible { display: block; }
         .pin-select:focus { outline: none; border-color: #3b82f6; }
 
+        /* Confirm modal */
+        .confirm-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .confirm-modal.active { display: flex; }
+
+        .confirm-box {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 28px 32px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .confirm-box h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #f1f5f9;
+            margin-bottom: 10px;
+        }
+        .confirm-box p {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        .confirm-box p span {
+            color: #e2e8f0;
+            font-weight: 500;
+        }
+        .confirm-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
         /* Modal */
         .modal {
             display: none;
@@ -445,6 +488,18 @@
     </div>
 </div>
 
+<!-- Confirm delete modal -->
+<div class="confirm-modal" id="confirm-modal">
+    <div class="confirm-box">
+        <h3>Remove server</h3>
+        <p>Are you sure you want to remove <span id="confirm-server-name"></span>?<br>The connection will be closed immediately.</p>
+        <div class="confirm-actions">
+            <button class="btn btn-secondary" onclick="closeConfirm()">Cancel</button>
+            <button class="btn" id="confirm-ok-btn" style="background:#ef4444;color:#fff;border-color:#ef4444;">Remove</button>
+        </div>
+    </div>
+</div>
+
 <script>
     let ws = null;
 
@@ -554,17 +609,40 @@
         document.querySelector('.balancing-bar').style.opacity = disabled ? '0.45' : '1';
     }
 
-    async function deleteServer(id) {
-        if (!confirm(`Remove server "${id}"?`)) return;
+    function deleteServer(id) {
+        document.getElementById('confirm-server-name').textContent = id;
+        document.getElementById('confirm-ok-btn').onclick = () => confirmDeleteServer(id);
+        document.getElementById('confirm-modal').classList.add('active');
+    }
+
+    function closeConfirm() {
+        document.getElementById('confirm-modal').classList.remove('active');
+    }
+
+    async function confirmDeleteServer(id) {
+        closeConfirm();
         try {
             const r = await fetch(`/api/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
             if (!r.ok) {
                 const t = await r.text();
-                alert('Error: ' + t);
+                showError('Failed to remove server: ' + t);
             }
         } catch(e) {
-            alert('Error: ' + e);
+            showError('Error: ' + e);
         }
+    }
+
+    function showError(msg) {
+        // Временный тост-уведомление
+        const toast = document.createElement('div');
+        toast.textContent = msg;
+        Object.assign(toast.style, {
+            position: 'fixed', bottom: '24px', right: '24px', zIndex: '3000',
+            background: '#ef4444', color: '#fff', padding: '12px 20px',
+            borderRadius: '8px', fontSize: '14px', boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
+        });
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
     }
 
     // ── Deploy progress ────────────────────────────────────────────────────────
