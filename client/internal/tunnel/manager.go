@@ -305,6 +305,22 @@ func (m *Manager) checkServersHealth() {
 
 // ── Exported API ──────────────────────────────────────────────────────────────
 
+// SetBalancing переключает режим балансировки.
+// mode="round-robin" (или другая стратегия) — балансировка по всем серверам.
+// mode="pinned", serverID="server-X.X.X.X" — весь трафик через один сервер.
+func (m *Manager) SetBalancing(mode, serverID string) {
+	if mode == "pinned" {
+		m.balancer.SetPinned(serverID)
+	} else {
+		m.balancer.SetPinned("") // снимаем pin, возвращаемся к стратегии
+	}
+}
+
+// GetBalancing возвращает текущий режим и ID pinned-сервера (если есть).
+func (m *Manager) GetBalancing() (mode, pinnedID string) {
+	return m.balancer.GetMode()
+}
+
 func (m *Manager) GetServers() []*ServerConnection {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

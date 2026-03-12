@@ -10,6 +10,7 @@ import (
 type LoadBalancer struct {
 	manager  *Manager
 	strategy string
+	pinnedID string // если задан — весь трафик идёт только через этот сервер
 	index    int
 	mu       sync.Mutex
 }
@@ -23,8 +24,33 @@ func NewLoadBalancer(manager *Manager, strategy string) *LoadBalancer {
 	}
 }
 
+// SetPinned переключает режим: пустой serverID = балансировка, непустой = pinned.
+func (lb *LoadBalancer) SetPinned(serverID string) {
+	lb.mu.Lock()
+	lb.pinnedID = serverID
+	lb.mu.Unlock()
+}
+
+// GetMode возвращает текущий режим и pinned-сервер (если есть).
+func (lb *LoadBalancer) GetMode() (mode, pinnedID string) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	if lb.pinnedID != "" {
+		return "pinned", lb.pinnedID
+	}
+	return lb.strategy, ""
+}
+
 // SelectServer выбирает сервер согласно стратегии
 func (lb *LoadBalancer) SelectServer() *ServerConnection {
+	lb.mu.Lock()
+	pinnedID := lb.pinnedID
+	lb.mu.Unlock()
+
+	if pinnedID != "" {
+		return lb.findByID(pinnedID)
+	}
+
 	switch lb.strategy {
 	case "round-robin":
 		return lb.roundRobin()
@@ -35,6 +61,21 @@ func (lb *LoadBalancer) SelectServer() *ServerConnection {
 	default:
 		return lb.roundRobin()
 	}
+}
+
+// findByID возвращает активный сервер по ID, или nil.
+func (lb *LoadBalancer) findByID(id string) *ServerConnection {
+	for _, s := range lb.manager.GetServers() {
+		if s.Info.ID == id {
+			s.mu.RLock()
+			active := s.Active
+			s.mu.RUnlock()
+			if active {
+				return s
+			}
+		}
+	}
+	return nil
 }
 
 // roundRobin выбор по кругу

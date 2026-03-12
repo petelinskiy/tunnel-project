@@ -59,6 +59,8 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/servers/{id}", s.handleDeleteServer).Methods("DELETE")
 	api.HandleFunc("/metrics", s.handleGetMetrics).Methods("GET")
 	api.HandleFunc("/deploy", s.handleDeploy).Methods("POST")
+	api.HandleFunc("/balancing", s.handleGetBalancing).Methods("GET")
+	api.HandleFunc("/balancing", s.handleSetBalancing).Methods("POST")
 
 	s.router.HandleFunc("/ws/monitor", s.handleWebSocket)
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
@@ -139,6 +141,40 @@ func (s *Server) handleGetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := s.tunnelManager.GetMetrics()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+// handleGetBalancing возвращает текущий режим балансировки.
+func (s *Server) handleGetBalancing(w http.ResponseWriter, r *http.Request) {
+	mode, pinnedID := s.tunnelManager.GetBalancing()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"mode":      mode,
+		"server_id": pinnedID,
+	})
+}
+
+// handleSetBalancing переключает режим балансировки.
+func (s *Server) handleSetBalancing(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode     string `json:"mode"`
+		ServerID string `json:"server_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Mode == "" {
+		http.Error(w, "mode is required", http.StatusBadRequest)
+		return
+	}
+	s.tunnelManager.SetBalancing(req.Mode, req.ServerID)
+
+	mode, pinnedID := s.tunnelManager.GetBalancing()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"mode":      mode,
+		"server_id": pinnedID,
+	})
 }
 
 // deployRequest — тело запроса на деплой
