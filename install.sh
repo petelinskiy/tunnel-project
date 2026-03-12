@@ -53,6 +53,132 @@ step_done() {
     echo -e "${CYAN}└─ ${GREEN}готово${CYAN} (${elapsed}s)${NC}"
 }
 
+# ─── Деинсталляция ────────────────────────────────────────────────────────────
+
+do_uninstall() {
+    echo ""
+    echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║          Tunnel Proxy — Удаление                              ║${NC}"
+    echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "  ${RED}✗ Запустите скрипт от root:${NC}"
+        echo -e "  ${YELLOW}  sudo bash install.sh --uninstall${NC}"
+        exit 1
+    fi
+
+    # Определяем compose
+    if docker compose version &>/dev/null 2>&1; then
+        COMPOSE="docker compose"
+    elif command -v docker-compose &>/dev/null; then
+        COMPOSE="docker-compose"
+    fi
+
+    echo -e "${CYAN}┌─ Остановка и удаление Docker-контейнера${NC}"
+    if [[ -f "$INSTALL_DIR/client/docker-compose.yml" ]] && [[ -n "${COMPOSE:-}" ]]; then
+        $COMPOSE -f "$INSTALL_DIR/client/docker-compose.yml" down --rmi all --volumes 2>/dev/null && \
+            log "Контейнер и образ удалены" || warn "Контейнер уже остановлен или не найден"
+    else
+        docker stop tunnel-client 2>/dev/null && docker rm tunnel-client 2>/dev/null && \
+            log "Контейнер удалён" || warn "Контейнер не найден"
+        docker rmi client-tunnel-client 2>/dev/null && log "Образ удалён" || true
+    fi
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo -e "${CYAN}┌─ Удаление nftables-правил (tunnel-proxy)${NC}"
+    nft delete table ip tunnel-proxy 2>/dev/null && log "nftables-таблица tunnel-proxy удалена" || \
+        warn "Таблица tunnel-proxy не найдена"
+    # Очищаем сохранённый конфиг
+    if [[ -f /etc/nftables.conf ]]; then
+        sed -i '/table ip tunnel-proxy/,/^}/d' /etc/nftables.conf 2>/dev/null || true
+        log "Правила удалены из /etc/nftables.conf"
+    fi
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo -e "${CYAN}┌─ Остановка и удаление сервисов${NC}"
+    for svc in gost-redirect update-geoip-ru.timer update-geoip-ru; do
+        systemctl stop "$svc" 2>/dev/null || true
+        systemctl disable "$svc" 2>/dev/null || true
+    done
+    rm -f /etc/systemd/system/gost-redirect.service
+    rm -f /etc/systemd/system/update-geoip-ru.service
+    rm -f /etc/systemd/system/update-geoip-ru.timer
+    systemctl daemon-reload
+    log "Systemd-сервисы удалены"
+
+    # dnsmasq — только наш конфиг, сам dnsmasq не трогаем
+    if [[ -f /etc/dnsmasq.d/tunnel-gateway.conf ]]; then
+        rm -f /etc/dnsmasq.d/tunnel-gateway.conf
+        systemctl restart dnsmasq 2>/dev/null || true
+        log "Конфиг dnsmasq (tunnel-gateway.conf) удалён"
+    fi
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo -e "${CYAN}┌─ Удаление бинарников и скриптов${NC}"
+    rm -f /usr/local/bin/gost
+    rm -f /usr/local/bin/update-geoip-ru.sh
+    log "Удалены: gost, update-geoip-ru.sh"
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo -e "${CYAN}┌─ Удаление директории проекта ($INSTALL_DIR)${NC}"
+    if [[ -d "$INSTALL_DIR" ]]; then
+        rm -rf "$INSTALL_DIR"
+        log "$INSTALL_DIR удалён"
+    else
+        warn "$INSTALL_DIR не найден"
+    fi
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo -e "${CYAN}┌─ Восстановление DNS${NC}"
+    if [[ -f /etc/resolv.conf ]]; then
+        current_dns=$(grep 'nameserver' /etc/resolv.conf | head -1)
+        if [[ "$current_dns" == "nameserver 127.0.0.1" ]]; then
+            echo "nameserver 8.8.8.8" > /etc/resolv.conf
+            log "DNS восстановлен: 8.8.8.8"
+        else
+            info "DNS уже настроен: $current_dns"
+        fi
+    fi
+    echo -e "${CYAN}└─ ${GREEN}готово${NC}"
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║   ✓ Tunnel Proxy успешно удалён                               ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  Для повторной установки:"
+    echo -e "  ${YELLOW}sudo bash install.sh --install${NC}"
+    echo ""
+    exit 0
+}
+
+# ─── Разбор аргументов ────────────────────────────────────────────────────────
+
+MODE=""
+for arg in "$@"; do
+    case "$arg" in
+        --install)   MODE="install" ;;
+        --uninstall) MODE="uninstall" ;;
+        *)
+            echo -e "  ${RED}✗ Неизвестный аргумент: $arg${NC}"
+            echo -e "  Использование:"
+            echo -e "    ${YELLOW}sudo bash install.sh --install${NC}"
+            echo -e "    ${YELLOW}sudo bash install.sh --uninstall${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$MODE" ]]; then
+    echo -e "  ${RED}✗ Укажите режим запуска:${NC}"
+    echo -e "    ${YELLOW}sudo bash install.sh --install${NC}"
+    echo -e "    ${YELLOW}sudo bash install.sh --uninstall${NC}"
+    exit 1
+fi
+
+[[ "$MODE" == "uninstall" ]] && do_uninstall
+
 # ─── Шапка ────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -63,7 +189,7 @@ echo ""
 
 if [[ $EUID -ne 0 ]]; then
     echo -e "  ${RED}✗ Запустите скрипт от root:${NC}"
-    echo -e "  ${YELLOW}  sudo bash install.sh${NC}"
+    echo -e "  ${YELLOW}  sudo bash install.sh --install${NC}"
     exit 1
 fi
 
@@ -571,5 +697,6 @@ echo -e "  Перезапуск:        ${YELLOW}${COMPOSE} -f ${INSTALL_DIR}/cl
 echo -e "  Остановить:        ${YELLOW}${COMPOSE} -f ${INSTALL_DIR}/client/docker-compose.yml down${NC}"
 echo -e "  Статус:            ${YELLOW}docker ps | grep tunnel${NC}"
 echo -e "  Обновить GeoIP:    ${YELLOW}sudo /usr/local/bin/update-geoip-ru.sh${NC}"
-echo -e "  Переустановить:    ${YELLOW}sudo bash ${INSTALL_DIR}/install.sh${NC}"
+echo -e "  Переустановить:    ${YELLOW}sudo bash ${INSTALL_DIR}/install.sh --install${NC}"
+echo -e "  Удалить:           ${YELLOW}sudo bash ${INSTALL_DIR}/install.sh --uninstall${NC}"
 echo ""
