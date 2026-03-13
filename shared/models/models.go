@@ -57,7 +57,7 @@ type ServerInfo struct {
 	Enabled     bool   `yaml:"enabled" json:"enabled"`
 	SSHUser     string `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty"`
 	SSHPassword string `yaml:"ssh_password,omitempty" json:"ssh_password,omitempty"`
-	Domain      string `yaml:"domain,omitempty" json:"domain,omitempty"`
+	SNI         string `yaml:"sni,omitempty" json:"sni,omitempty"`
 }
 
 // ServerMetrics метрики сервера

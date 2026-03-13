@@ -475,9 +475,9 @@
         </div>
 
         <div class="form-group">
-            <label for="server-domain">Domain for Let's Encrypt (optional)</label>
-            <input type="text" id="server-domain" placeholder="tunnel.example.com">
-            <small style="color:#94a3b8;font-size:12px;">If set, certbot will issue a real TLS cert. Port 80 must be free and DNS must point to this server.</small>
+            <label for="server-sni">SNI / Domain (опционально, для Let's Encrypt)</label>
+            <input type="text" id="server-sni" placeholder="tunnel.example.com">
+            <small style="color:#94a3b8;font-size:12px;">Если указан — certbot выпустит реальный TLS-сертификат. Порт 80 должен быть свободен, DNS должен указывать на этот сервер.</small>
         </div>
 
         <!-- Deploy progress -->
@@ -734,7 +734,7 @@
         const port = parseInt(document.getElementById('server-port').value) || 443;
         const user = document.getElementById('ssh-user').value.trim();
         const pass = document.getElementById('ssh-pass').value;
-        const domain = document.getElementById('server-domain').value.trim();
+        const sni = document.getElementById('server-sni').value.trim();
 
         if (!host) { alert('Please enter server host'); return; }
 
@@ -747,7 +747,7 @@
             const resp = await fetch('/api/deploy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ host, port, username: user, password: pass, domain })
+                body: JSON.stringify({ host, port, username: user, password: pass, sni })
             });
 
             if (!resp.ok) {

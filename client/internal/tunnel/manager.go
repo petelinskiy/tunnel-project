@@ -115,8 +115,8 @@ func (m *Manager) Stop() {
 // If the server has a domain (Let's Encrypt cert), that domain is used.
 // Otherwise a random entry from SNIList is picked, or host if the list is empty.
 func (m *Manager) pickSNI(server models.ServerInfo) string {
-	if server.Domain != "" {
-		return server.Domain
+	if server.SNI != "" {
+		return server.SNI
 	}
 	list := m.config.Tunnel.SNIList
 	if len(list) == 0 {

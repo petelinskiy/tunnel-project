@@ -213,7 +213,7 @@ type deployRequest struct {
 	SSHUser  string `json:"username"`
 	SSHPass  string `json:"password"`
 	TunPort  int    `json:"port"`   // tunnel port, default 443
-	Domain   string `json:"domain"` // optional: domain for Let's Encrypt cert
+	SNI      string `json:"sni"`    // optional: SNI / domain for Let's Encrypt cert
 }
 
 // handleDeploy разворачивает сервер через SSH и подключается к нему
@@ -241,7 +241,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 
 		d := deploy.NewDeployer()
-		err := d.Deploy(req.Host, req.SSHUser, req.SSHPass, s.tunnelManager.GetAuthToken(), req.Domain, req.TunPort, func(progress int, msg string) {
+		err := d.Deploy(req.Host, req.SSHUser, req.SSHPass, s.tunnelManager.GetAuthToken(), req.SNI, req.TunPort, func(progress int, msg string) {
 			log.Printf("[deploy %s] %d%% %s", serverID, progress, msg)
 			broadcast(map[string]interface{}{
 				"type":     "deploy_progress",
@@ -269,7 +269,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 			Enabled:     true,
 			SSHUser:     req.SSHUser,
 			SSHPassword: req.SSHPass,
-			Domain:      req.Domain,
+			SNI:         req.SNI,
 		})
 
 		broadcast(map[string]interface{}{

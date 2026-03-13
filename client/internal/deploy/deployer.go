@@ -26,8 +26,8 @@ func NewDeployer() *Deployer {
 // Deploy installs and starts the tunnel server on a remote host via SSH.
 // SSH is assumed to be on port 22. authToken is written to the server config.
 // tunnelPort is the port the tunnel server will listen on (default 443).
-// domain, if non-empty, triggers certbot Let's Encrypt certificate issuance.
-func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken, domain string, tunnelPort int, onProgress ProgressFunc) error {
+// sni, if non-empty, triggers certbot Let's Encrypt certificate issuance.
+func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken, sni string, tunnelPort int, onProgress ProgressFunc) error {
 	if tunnelPort == 0 {
 		tunnelPort = 443
 	}
@@ -111,12 +111,12 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken, domain string, 
 		return err
 	}
 
-	// Determine cert paths based on whether a domain was supplied
+	// Determine cert paths based on whether a sni was supplied
 	certPath := "/opt/tunnel/data/cert.pem"
 	keyPath := "/opt/tunnel/data/key.pem"
-	if domain != "" {
-		certPath = fmt.Sprintf("/etc/letsencrypt/live/%s/fullchain.pem", domain)
-		keyPath = fmt.Sprintf("/etc/letsencrypt/live/%s/privkey.pem", domain)
+	if sni != "" {
+		certPath = fmt.Sprintf("/etc/letsencrypt/live/%s/fullchain.pem", sni)
+		keyPath = fmt.Sprintf("/etc/letsencrypt/live/%s/privkey.pem", sni)
 	}
 
 	onProgress(60, "Writing server configuration...")
@@ -140,19 +140,19 @@ monitoring:
 		return fmt.Errorf("config upload failed: %w", err)
 	}
 
-	if domain != "" {
+	if sni != "" {
 		onProgress(65, "Installing certbot...")
 		run("bash -c 'apt-get install -y -q certbot 2>/dev/null || yum install -y certbot 2>/dev/null || snap install --classic certbot 2>/dev/null || true'")
 
-		onProgress(70, "Obtaining Let's Encrypt certificate for "+domain+"...")
+		onProgress(70, "Obtaining Let's Encrypt certificate for "+sni+"...")
 		// Open port 80 in iptables for ACME challenge (renewal also needs it)
 		run("iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 80 -j ACCEPT")
 
 		if err := run(fmt.Sprintf(
 			"certbot certonly --standalone --non-interactive --agree-tos --email admin@%s -d %s",
-			domain, domain,
+			sni, sni,
 		)); err != nil {
-			return fmt.Errorf("certbot failed (check DNS A record for %s points to this server): %w", domain, err)
+			return fmt.Errorf("certbot failed (check DNS A record for %s points to this server): %w", sni, err)
 		}
 
 		// Renewal cron: runs twice daily, restarts tunnel-server on new cert
