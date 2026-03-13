@@ -111,11 +111,16 @@ func (m *Manager) Stop() {
 	}
 }
 
-// pickSNI возвращает случайный SNI из списка, или host если список пуст
-func (m *Manager) pickSNI(host string) string {
+// pickSNI returns the SNI for this server.
+// If the server has a domain (Let's Encrypt cert), that domain is used.
+// Otherwise a random entry from SNIList is picked, or host if the list is empty.
+func (m *Manager) pickSNI(server models.ServerInfo) string {
+	if server.Domain != "" {
+		return server.Domain
+	}
 	list := m.config.Tunnel.SNIList
 	if len(list) == 0 {
-		return host
+		return server.Host
 	}
 	return list[mrand.Intn(len(list))]
 }
@@ -133,7 +138,7 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 		}
 	}
 
-	sni := m.pickSNI(server.Host)
+	sni := m.pickSNI(server)
 	log.Printf("Connecting to server %s:%d (uTLS Chrome, SNI=%s)...", server.Host, server.Port, sni)
 
 	addr := fmt.Sprintf("%s:%d", server.Host, server.Port)

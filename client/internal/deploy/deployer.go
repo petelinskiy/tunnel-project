@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -25,7 +26,8 @@ func NewDeployer() *Deployer {
 // Deploy installs and starts the tunnel server on a remote host via SSH.
 // SSH is assumed to be on port 22. authToken is written to the server config.
 // tunnelPort is the port the tunnel server will listen on (default 443).
-func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, tunnelPort int, onProgress ProgressFunc) error {
+// domain, if non-empty, triggers certbot Let's Encrypt certificate issuance.
+func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken, domain string, tunnelPort int, onProgress ProgressFunc) error {
 	if tunnelPort == 0 {
 		tunnelPort = 443
 	}
@@ -109,6 +111,14 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, tunnelPo
 		return err
 	}
 
+	// Determine cert paths based on whether a domain was supplied
+	certPath := "/opt/tunnel/data/cert.pem"
+	keyPath := "/opt/tunnel/data/key.pem"
+	if domain != "" {
+		certPath = fmt.Sprintf("/etc/letsencrypt/live/%s/fullchain.pem", domain)
+		keyPath = fmt.Sprintf("/etc/letsencrypt/live/%s/privkey.pem", domain)
+	}
+
 	onProgress(60, "Writing server configuration...")
 	serverConfig := fmt.Sprintf(`auth_token: %s
 
@@ -117,23 +127,45 @@ server:
   metrics_port: %d
 
 tls:
-  cert_path: /opt/tunnel/data/cert.pem
-  key_path: /opt/tunnel/data/key.pem
+  cert_path: %s
+  key_path: %s
   auto_cert: false
 
 monitoring:
   enabled: true
   metrics_endpoint: /metrics
-`, authToken, tunnelPort, metricsPort)
+`, authToken, tunnelPort, metricsPort, certPath, keyPath)
 
 	if err := uploadText("/opt/tunnel/server.yml", serverConfig); err != nil {
 		return fmt.Errorf("config upload failed: %w", err)
 	}
 
-	onProgress(70, "Generating TLS certificate...")
-	err = run("bash -c '[ -f /opt/tunnel/data/cert.pem ] || openssl req -x509 -newkey rsa:4096 -keyout /opt/tunnel/data/key.pem -out /opt/tunnel/data/cert.pem -days 3650 -nodes -subj \"/CN=tunnel-server\" && chmod 600 /opt/tunnel/data/key.pem'")
-	if err != nil {
-		return fmt.Errorf("TLS cert generation failed: %w", err)
+	if domain != "" {
+		onProgress(65, "Installing certbot...")
+		run("bash -c 'apt-get install -y -q certbot 2>/dev/null || yum install -y certbot 2>/dev/null || snap install --classic certbot 2>/dev/null || true'")
+
+		onProgress(70, "Obtaining Let's Encrypt certificate for "+domain+"...")
+		// Open port 80 in iptables for ACME challenge (renewal also needs it)
+		run("iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 80 -j ACCEPT")
+
+		if err := run(fmt.Sprintf(
+			"certbot certonly --standalone --non-interactive --agree-tos --email admin@%s -d %s",
+			domain, domain,
+		)); err != nil {
+			return fmt.Errorf("certbot failed (check DNS A record for %s points to this server): %w", domain, err)
+		}
+
+		// Renewal cron: runs twice daily, restarts tunnel-server on new cert
+		renewalCron := "0 0,12 * * * root certbot renew --quiet --standalone --deploy-hook 'systemctl restart tunnel-server 2>/dev/null || pkill -f tunnel-server'\n"
+		if err := uploadText("/etc/cron.d/certbot-tunnel", renewalCron); err != nil {
+			log.Printf("Warning: failed to install renewal cron: %v", err)
+		}
+	} else {
+		onProgress(70, "Generating TLS certificate...")
+		err = run("bash -c '[ -f /opt/tunnel/data/cert.pem ] || openssl req -x509 -newkey rsa:4096 -keyout /opt/tunnel/data/key.pem -out /opt/tunnel/data/cert.pem -days 3650 -nodes -subj \"/CN=tunnel-server\" && chmod 600 /opt/tunnel/data/key.pem'")
+		if err != nil {
+			return fmt.Errorf("TLS cert generation failed: %w", err)
+		}
 	}
 
 	onProgress(82, "Installing systemd service...")
