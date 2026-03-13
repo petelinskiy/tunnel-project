@@ -6,14 +6,8 @@ client:
 tunnel:
   jitter_max_ms: 500   # случайная задержка 0–500ms перед каждым подключением
   sni_list:            # SNI подставляется случайно из списка (маскировка под реальные домены)
-    - "www.google.com"
-    - "www.youtube.com"
-    - "www.cloudflare.com"
-    - "cdn.jsdelivr.net"
-    - "ajax.googleapis.com"
-    - "fonts.googleapis.com"
-    - "www.gstatic.com"
-    - "storage.googleapis.com"
+    - "photo.petroff.pro"
+    - "www.petroff.pro"
 
 balancing:
   strategy: round-robin  # round-robin, latency, least-loaded
