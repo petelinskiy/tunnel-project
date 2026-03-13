@@ -90,14 +90,8 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, tunnelPo
 		return fmt.Errorf("dependency install failed: %w", err)
 	}
 
-	onProgress(33, "Configuring firewall...")
-	// ufw (Debian/Ubuntu) — только если ufw уже активен, не трогаем его если не используется
-	run(fmt.Sprintf("bash -c 'command -v ufw &>/dev/null && ufw status | grep -q \"Status: active\" && ufw allow %d/tcp && ufw allow %d/tcp || true'", tunnelPort, metricsPort))
-	// iptables — только добавляем правила, без сохранения в файл (не перезаписываем чужой firewall)
-	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", tunnelPort, tunnelPort))
-	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", metricsPort, metricsPort))
-	// NOTE: intentionally NOT saving iptables to /etc/iptables/rules.v4 and NOT creating
-	// if-pre-up.d hooks — would conflict with aapanel/BT/CSF/firewalld on managed VPS hosts
+	// Firewall rules are managed by the server binary itself (openFirewall/closeFirewall)
+	// to avoid touching the host's persistent firewall configuration.
 
 	onProgress(42, "Stopping existing server...")
 	run("systemctl stop tunnel-server 2>/dev/null || true")

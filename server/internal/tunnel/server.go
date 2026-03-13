@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,8 @@ func (s *Server) Start() error {
 	s.listener = ln
 
 	log.Printf("Server listening on %s (TLS 1.3 + yamux)", addr)
+
+	s.openFirewall()
 
 	s.prevCPU, _ = readCPUStat()
 	go s.acceptLoop()
@@ -162,6 +165,46 @@ func (s *Server) Stop() {
 	if s.listener != nil {
 		s.listener.Close()
 	}
+	s.closeFirewall()
+}
+
+// openFirewall добавляет iptables/ufw правила для портов туннеля.
+// Вызывается при старте — не пишет в persistent конфиги хоста.
+func (s *Server) openFirewall() {
+	ports := []int{s.config.Server.ListenPort}
+	if s.config.Server.MetricsPort > 0 {
+		ports = append(ports, s.config.Server.MetricsPort)
+	}
+	for _, port := range ports {
+		runSilent(fmt.Sprintf(
+			"iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT",
+			port, port))
+		runSilent(fmt.Sprintf(
+			"ufw status 2>/dev/null | grep -q 'Status: active' && ufw allow %d/tcp || true",
+			port))
+	}
+	log.Printf("Firewall: opened ports %v", ports)
+}
+
+// closeFirewall удаляет правила при остановке.
+func (s *Server) closeFirewall() {
+	ports := []int{s.config.Server.ListenPort}
+	if s.config.Server.MetricsPort > 0 {
+		ports = append(ports, s.config.Server.MetricsPort)
+	}
+	for _, port := range ports {
+		runSilent(fmt.Sprintf(
+			"iptables -D INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || true",
+			port))
+		runSilent(fmt.Sprintf(
+			"ufw status 2>/dev/null | grep -q 'Status: active' && ufw delete allow %d/tcp || true",
+			port))
+	}
+	log.Printf("Firewall: closed ports %v", ports)
+}
+
+func runSilent(cmd string) {
+	exec.Command("bash", "-c", cmd).Run() //nolint:errcheck
 }
 
 // handleStream читает адрес назначения, подключается и проксирует трафик
