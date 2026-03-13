@@ -17,7 +17,7 @@ import (
 	"sort"
 	"time"
 
-	smux "github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 	utls "github.com/refraction-networking/utls"
 	"github.com/yourusername/tunnel-project/shared/models"
 	"github.com/yourusername/tunnel-project/shared/transport"
@@ -38,7 +38,7 @@ type Manager struct {
 // ServerConnection представляет соединение с сервером
 type ServerConnection struct {
 	Info    models.ServerInfo
-	Session *smux.Session
+	Session *yamux.Session
 	Metrics *models.ServerMetrics
 	Active  bool
 	mu      sync.RWMutex
@@ -120,7 +120,7 @@ func (m *Manager) pickSNI(host string) string {
 	return list[mrand.Intn(len(list))]
 }
 
-// connectToServer устанавливает uTLS соединение с Chrome fingerprint и запускает smux
+// connectToServer устанавливает uTLS соединение с Chrome fingerprint и запускает yamux
 func (m *Manager) connectToServer(server models.ServerInfo) error {
 	// Jitter: случайная задержка перед подключением
 	if ms := m.config.Tunnel.JitterMaxMs; ms > 0 {
@@ -161,18 +161,17 @@ func (m *Manager) connectToServer(server models.ServerInfo) error {
 		return fmt.Errorf("WebSocket upgrade: %w", err)
 	}
 
-	// smux поверх WebSocket — один коннект, много независимых потоков
-	smuxCfg := smux.DefaultConfig()
-	smuxCfg.KeepAliveInterval  = 10 * time.Second
-	smuxCfg.KeepAliveTimeout   = 30 * time.Second
-	smuxCfg.MaxFrameSize       = 65535
-	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
-	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
+	// yamux поверх WebSocket — один коннект, много независимых потоков
+	yamuxCfg := yamux.DefaultConfig()
+	yamuxCfg.EnableKeepAlive      = true
+	yamuxCfg.KeepAliveInterval    = 10 * time.Second
+	yamuxCfg.MaxStreamWindowSize  = 16 * 1024 * 1024 // 16 MB window
+	yamuxCfg.LogOutput            = io.Discard
 
-	session, err := smux.Client(wsConn, smuxCfg)
+	session, err := yamux.Client(wsConn, yamuxCfg)
 	if err != nil {
 		wsConn.Close()
-		return fmt.Errorf("smux client: %w", err)
+		return fmt.Errorf("yamux client: %w", err)
 	}
 
 	serverConn := &ServerConnection{
@@ -206,7 +205,7 @@ func (m *Manager) Dial(network, address string) (net.Conn, error) {
 	return m.dialThroughServer(server, address)
 }
 
-// dialThroughServer открывает smux-поток и согласовывает адрес с сервером
+// dialThroughServer открывает yamux-поток и согласовывает адрес с сервером
 func (m *Manager) dialThroughServer(server *ServerConnection, address string) (net.Conn, error) {
 	server.mu.RLock()
 	session := server.Session
@@ -216,7 +215,7 @@ func (m *Manager) dialThroughServer(server *ServerConnection, address string) (n
 		return nil, fmt.Errorf("server %s has no active session", server.Info.ID)
 	}
 
-	stream, err := session.OpenStream()
+	stream, err := session.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open stream: %w", err)
 	}
@@ -242,12 +241,12 @@ func (m *Manager) dialThroughServer(server *ServerConnection, address string) (n
 	server.Metrics.ActiveConns++
 	server.mu.Unlock()
 
-	return &trackedStream{Stream: stream, server: server}, nil
+	return &trackedStream{Conn: stream, server: server}, nil
 }
 
-// trackedStream оборачивает smux.Stream и отслеживает счётчик соединений
+// trackedStream оборачивает yamux-поток и отслеживает счётчик соединений
 type trackedStream struct {
-	*smux.Stream
+	net.Conn
 	server *ServerConnection
 	once   sync.Once
 }
@@ -260,7 +259,7 @@ func (t *trackedStream) Close() error {
 		}
 		t.server.mu.Unlock()
 	})
-	return t.Stream.Close()
+	return t.Conn.Close()
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────

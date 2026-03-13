@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	smux "github.com/xtaci/smux"
+	"github.com/hashicorp/yamux"
 	"github.com/yourusername/tunnel-project/shared/models"
 	"github.com/yourusername/tunnel-project/shared/transport"
 )
@@ -86,7 +86,7 @@ func (s *Server) Start() error {
 	}
 	s.listener = ln
 
-	log.Printf("Server listening on %s (TLS 1.3 + smux)", addr)
+	log.Printf("Server listening on %s (TLS 1.3 + yamux)", addr)
 
 	s.prevCPU, _ = readCPUStat()
 	go s.acceptLoop()
@@ -117,7 +117,7 @@ func (s *Server) acceptLoop() {
 	}
 }
 
-// handleConn выполняет WebSocket upgrade, затем запускает smux-сессию
+// handleConn выполняет WebSocket upgrade, затем запускает yamux-сессию
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
 
@@ -131,25 +131,24 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	smuxCfg := smux.DefaultConfig()
-	smuxCfg.KeepAliveInterval  = 10 * time.Second
-	smuxCfg.KeepAliveTimeout   = 30 * time.Second
-	smuxCfg.MaxFrameSize       = 65535
-	smuxCfg.MaxReceiveBuffer   = 67108864 // 64 MB
-	smuxCfg.MaxStreamBuffer    = 16777216 // 16 MB
+	yamuxCfg := yamux.DefaultConfig()
+	yamuxCfg.EnableKeepAlive     = true
+	yamuxCfg.KeepAliveInterval   = 10 * time.Second
+	yamuxCfg.MaxStreamWindowSize = 16 * 1024 * 1024 // 16 MB window
+	yamuxCfg.LogOutput           = io.Discard
 
-	session, err := smux.Server(wsConn, smuxCfg)
+	session, err := yamux.Server(wsConn, yamuxCfg)
 	if err != nil {
-		log.Printf("smux server error: %v", err)
+		log.Printf("yamux server error: %v", err)
 		return
 	}
 	defer session.Close()
 
 	for {
-		stream, err := session.AcceptStream()
+		stream, err := session.Accept()
 		if err != nil {
 			if !session.IsClosed() {
-				log.Printf("AcceptStream error: %v", err)
+				log.Printf("Accept error: %v", err)
 			}
 			return
 		}
@@ -166,7 +165,7 @@ func (s *Server) Stop() {
 }
 
 // handleStream читает адрес назначения, подключается и проксирует трафик
-func (s *Server) handleStream(stream *smux.Stream) {
+func (s *Server) handleStream(stream net.Conn) {
 	defer stream.Close()
 
 	stream.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -176,11 +175,11 @@ func (s *Server) handleStream(stream *smux.Stream) {
 		return
 	}
 
-	log.Printf("Stream %d: → %s", stream.ID(), addr)
+	log.Printf("Stream → %s", addr)
 
 	targetConn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		log.Printf("Stream %d: failed to connect to %s: %v", stream.ID(), addr, err)
+		log.Printf("Stream: failed to connect to %s: %v", addr, err)
 		fmt.Fprintf(stream, "ERR %v\n", err)
 		return
 	}
