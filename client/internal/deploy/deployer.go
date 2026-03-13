@@ -91,22 +91,13 @@ func (d *Deployer) Deploy(host, sshUser, sshPassword, authToken string, tunnelPo
 	}
 
 	onProgress(33, "Configuring firewall...")
-	// ufw (Debian/Ubuntu)
-	run(fmt.Sprintf("bash -c 'command -v ufw &>/dev/null && ufw --force enable && ufw allow 22/tcp && ufw allow %d/tcp && ufw allow %d/tcp || true'", tunnelPort, metricsPort))
-	// iptables — добавляем правила и сохраняем (Debian/Ubuntu/CentOS)
+	// ufw (Debian/Ubuntu) — только если ufw уже активен, не трогаем его если не используется
+	run(fmt.Sprintf("bash -c 'command -v ufw &>/dev/null && ufw status | grep -q \"Status: active\" && ufw allow %d/tcp && ufw allow %d/tcp || true'", tunnelPort, metricsPort))
+	// iptables — только добавляем правила, без сохранения в файл (не перезаписываем чужой firewall)
 	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", tunnelPort, tunnelPort))
 	run(fmt.Sprintf("bash -c 'iptables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport %d -j ACCEPT || true'", metricsPort, metricsPort))
-	run("bash -c 'command -v iptables-save &>/dev/null && (mkdir -p /etc/iptables && iptables-save > /etc/iptables/rules.v4) || true'")
-	run("bash -c 'command -v netfilter-persistent &>/dev/null && netfilter-persistent save || true'")
-	run(`bash -c 'if ! command -v iptables-save &>/dev/null; then true; elif [ ! -f /etc/network/if-pre-up.d/iptables ]; then printf "#!/bin/sh\niptables-restore < /etc/iptables/rules.v4\n" > /etc/network/if-pre-up.d/iptables && chmod +x /etc/network/if-pre-up.d/iptables; fi || true'`)
-	// nftables (Arch Linux) — добавляем правила если нет iptables
-	run(fmt.Sprintf(`bash -c 'command -v pacman &>/dev/null && command -v nft &>/dev/null && {`+
-		`nft list table inet filter &>/dev/null || nft add table inet filter;`+
-		`nft list chain inet filter input &>/dev/null || nft add chain inet filter input { type filter hook input priority 0 \; policy accept \; };`+
-		`nft list chain inet filter input | grep -q "tcp dport %d" || nft add rule inet filter input tcp dport %d accept;`+
-		`nft list chain inet filter input | grep -q "tcp dport %d" || nft add rule inet filter input tcp dport %d accept;`+
-		`nft list ruleset > /etc/nftables.conf; systemctl enable nftables &>/dev/null || true;`+
-		`} || true'`, tunnelPort, tunnelPort, metricsPort, metricsPort))
+	// NOTE: intentionally NOT saving iptables to /etc/iptables/rules.v4 and NOT creating
+	// if-pre-up.d hooks — would conflict with aapanel/BT/CSF/firewalld on managed VPS hosts
 
 	onProgress(42, "Stopping existing server...")
 	run("systemctl stop tunnel-server 2>/dev/null || true")
