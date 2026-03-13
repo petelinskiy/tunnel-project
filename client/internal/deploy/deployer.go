@@ -220,20 +220,10 @@ func (d *Deployer) Uninstall(host, sshUser, sshPassword string) error {
 	run("systemctl daemon-reload 2>/dev/null || true")
 	run("rm -rf /opt/tunnel")
 
-	// Remove firewall rules — ufw (Debian/Ubuntu)
-	run("bash -c 'command -v ufw &>/dev/null && { ufw delete allow 8443/tcp; ufw delete allow 9443/tcp; ufw delete allow 443/tcp; ufw delete allow 1443/tcp; } 2>/dev/null || true'")
-
-	// Remove firewall rules — iptables (any distro)
-	run("bash -c 'for port in 443 1443 8443 9443; do iptables -D INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null || true; done'")
-	run("bash -c 'command -v iptables-save &>/dev/null && (mkdir -p /etc/iptables && iptables-save > /etc/iptables/rules.v4) || true'")
-
-	// Remove firewall rules — nftables (Arch)
-	run("bash -c 'command -v nft &>/dev/null && { " +
-		"for port in 443 1443 8443 9443; do " +
-		"handle=$(nft -a list chain inet filter input 2>/dev/null | grep \"tcp dport $port\" | awk \"{print \\$NF}\"); " +
-		"[ -n \"$handle\" ] && nft delete rule inet filter input handle $handle 2>/dev/null || true; " +
-		"done; " +
-		"nft list ruleset > /etc/nftables.conf 2>/dev/null || true; } || true'")
+	// Firewall rules are intentionally NOT removed — the server may use
+	// aapanel (BT), CSF, firewalld or other firewall managers that own
+	// their own chains/rulesets. Touching iptables/nftables here risks
+	// breaking SSH and panel access on shared/managed VPS hosts.
 
 	return nil
 }
