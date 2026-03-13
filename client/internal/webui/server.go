@@ -147,6 +147,10 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	// Broadcast удаления всем WebSocket-клиентам
+	data, _ := json.Marshal(map[string]string{"type": "server_deleted", "id": id})
+	s.wsHub.broadcast <- data
+
 	// Remote uninstall в фоне — не блокируем ответ
 	if info.SSHUser != "" && info.SSHPassword != "" {
 		go func() {

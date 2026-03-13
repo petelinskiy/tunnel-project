@@ -519,6 +519,7 @@
                 case 'deploy_progress': handleDeployProgress(msg.progress, msg.message); break;
                 case 'deploy_done':    handleDeployDone(); break;
                 case 'deploy_error':   handleDeployError(msg.message); break;
+                case 'server_deleted': removeServerRow(msg.id); break;
             }
         };
 
@@ -645,6 +646,18 @@
             }
         } catch(e) {
             showError('Error: ' + e);
+        }
+    }
+
+    function removeServerRow(id) {
+        const tbody = document.getElementById('servers-table');
+        const row = tbody.querySelector(`tr[data-id="${id}"]`);
+        if (row) row.remove();
+        const remaining = tbody.querySelectorAll('tr[data-id]').length;
+        updateBalancingLock(remaining);
+        if (!tbody.querySelector('tr[data-id]')) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:40px;">No servers configured. Click "Add Server" to get started.</td></tr>`;
+            updateBalancingLock(0);
         }
     }
 
