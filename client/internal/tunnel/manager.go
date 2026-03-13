@@ -393,6 +393,17 @@ func (m *Manager) AddServer(server models.ServerInfo) {
 	}()
 }
 
+// GetServerInfo возвращает ServerInfo по ID.
+func (m *Manager) GetServerInfo(id string) (models.ServerInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	conn, ok := m.servers[id]
+	if !ok {
+		return models.ServerInfo{}, fmt.Errorf("server %s not found", id)
+	}
+	return conn.Info, nil
+}
+
 // RemoveServer отключает сервер и удаляет его из конфига.
 func (m *Manager) RemoveServer(id string) error {
 	m.mu.Lock()

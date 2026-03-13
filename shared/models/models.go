@@ -51,10 +51,12 @@ type ServerConfig struct {
 
 // ServerInfo информация о сервере
 type ServerInfo struct {
-	ID      string `yaml:"id" json:"id"`
-	Host    string `yaml:"host" json:"host"`
-	Port    int    `yaml:"port" json:"port"`
-	Enabled bool   `yaml:"enabled" json:"enabled"`
+	ID          string `yaml:"id" json:"id"`
+	Host        string `yaml:"host" json:"host"`
+	Port        int    `yaml:"port" json:"port"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	SSHUser     string `yaml:"ssh_user,omitempty" json:"ssh_user,omitempty"`
+	SSHPassword string `yaml:"ssh_password,omitempty" json:"ssh_password,omitempty"`
 }
 
 // ServerMetrics метрики сервера

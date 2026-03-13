@@ -130,7 +130,7 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDeleteServer удаляет сервер
+// handleDeleteServer удаляет сервер из клиента и делает remote uninstall
 func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
@@ -138,9 +138,25 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
+	info, err := s.tunnelManager.GetServerInfo(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
 	if err := s.tunnelManager.RemoveServer(id); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
+	}
+	// Remote uninstall в фоне — не блокируем ответ
+	if info.SSHUser != "" && info.SSHPassword != "" {
+		go func() {
+			d := deploy.NewDeployer()
+			if err := d.Uninstall(info.Host, info.SSHUser, info.SSHPassword); err != nil {
+				log.Printf("Remote uninstall %s failed: %v", id, err)
+			} else {
+				log.Printf("Remote uninstall %s done", id)
+			}
+		}()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "id": id})
@@ -240,12 +256,14 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Добавляем сервер в менеджер
+		// Добавляем сервер в менеджер (сохраняем SSH для remote uninstall)
 		s.tunnelManager.AddServer(models.ServerInfo{
-			ID:      serverID,
-			Host:    req.Host,
-			Port:    req.TunPort,
-			Enabled: true,
+			ID:          serverID,
+			Host:        req.Host,
+			Port:        req.TunPort,
+			Enabled:     true,
+			SSHUser:     req.SSHUser,
+			SSHPassword: req.SSHPass,
 		})
 
 		broadcast(map[string]interface{}{

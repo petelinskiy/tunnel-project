@@ -188,3 +188,35 @@ WantedBy=multi-user.target
 	onProgress(100, "Deployment complete!")
 	return nil
 }
+
+// Uninstall removes tunnel-server from a remote host via SSH.
+func (d *Deployer) Uninstall(host, sshUser, sshPassword string) error {
+	cfg := &ssh.ClientConfig{
+		User:            sshUser,
+		Auth:            []ssh.AuthMethod{ssh.Password(sshPassword)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", host+":22", cfg)
+	if err != nil {
+		return fmt.Errorf("SSH connection failed: %w", err)
+	}
+	defer client.Close()
+
+	run := func(cmd string) {
+		sess, err := client.NewSession()
+		if err != nil {
+			return
+		}
+		defer sess.Close()
+		sess.CombinedOutput(cmd)
+	}
+
+	run("systemctl stop tunnel-server 2>/dev/null || true")
+	run("systemctl disable tunnel-server 2>/dev/null || true")
+	run("pkill -f 'tunnel-server --config' 2>/dev/null || true")
+	run("rm -f /etc/systemd/system/tunnel-server.service")
+	run("systemctl daemon-reload 2>/dev/null || true")
+	run("rm -rf /opt/tunnel")
+	return nil
+}
